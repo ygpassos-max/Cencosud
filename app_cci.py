@@ -4,114 +4,99 @@ import pandas as pd
 import streamlit as st
 
 # ---------------------------------------------------------
-# CONFIGURAÇÃO DE CAMINHOS E DIRETÓRIO (PASTA NA ÁREA DE TRABALHO)
+# DIRETÓRIO DE ARMAZENAMENTO COMPATÍVEL COM NUVEM & LOCAL
 # ---------------------------------------------------------
-USER_PROFILE = os.environ.get('USERPROFILE', '')
-PASTA_PROJETO = os.path.join(USER_PROFILE, 'Desktop', 'Projeto Custo')
+PASTA_PROJETO = os.path.dirname(os.path.abspath(__file__))
 
-# Garante que a pasta 'Projeto Custo' exista na Área de Trabalho
-if not os.path.exists(PASTA_PROJETO):
-    os.makedirs(PASTA_PROJETO)
-
-CAMINHO_HISTORICO = os.path.join(PASTA_PROJETO, 'historico_real.xlsx')
-CAMINHO_ENTRADA = os.path.join(PASTA_PROJETO, 'cotacoes_semanais.xlsx')
+CAMINHO_HISTORICO = os.path.join(PASTA_PROJETO, "historico_real.xlsx")
+CAMINHO_ENTRADA = os.path.join(PASTA_PROJETO, "cotacoes_semanais.xlsx")
+CAMINHO_REFERENCIA_MERCADO = os.path.join(
+    PASTA_PROJETO, "referencia_mercado.xlsx"
+)
 CAMINHO_SAIDA_CONSOLIDADA = os.path.join(
-    PASTA_PROJETO, 'CCI_Matriz_Decisao_Consolidada.xlsx'
+    PASTA_PROJETO, "CCI_Matriz_Decisao_Consolidada.xlsx"
 )
 
 # ---------------------------------------------------------
 # INTERFACE STREAMLIT
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title='Cencosud Commodity Intelligence (CCI)',
-    page_icon='🥩',
-    layout='wide',
+    page_title="Cencosud Commodity Intelligence (CCI)",
+    page_icon="🥩",
+    layout="wide",
 )
 
-st.title('🥩 Cencosud Commodity Intelligence (CCI)')
-st.caption(
-    'Painel de Entrada de Cotações Semanais e Análise de Margem - Direitório:'
-    f' {PASTA_PROJETO}'
-)
+st.title("🥩 Cencosud Commodity Intelligence (CCI)")
+st.caption("Painel Online de Cotações e Inteligência Comercial")
 
-# Aba inicial para Compradores e Aba de Inteligência
 aba_entrada, aba_analise = st.tabs(
-    ['📝 Entrada do Comprador (Semanal)', '📊 Matriz de Decisão & Histórico']
+    ["📝 Entrada do Comprador (Semanal)", "📊 Matriz de Decisão & Histórico Real"]
 )
 
-# Lista Oficial dos 4 Itens Prioritários
 PRODUTOS_OFICIAIS = [
-    'Filé de Peito',
-    'Ovo c/ 20',
-    'Alcatra',
-    'Contra Filé',
+    "Filé de Peito",
+    "Ovo c/ 20",
+    "Alcatra",
+    "Contra Filé",
 ]
 
-UFS_CENCOSUD = ['SP', 'BA', 'PE', 'RJ', 'SE', 'CE', 'GO']
+BANDEIRAS_CENCOSUD = [
+    "Prezunic",
+    "Bretas",
+    "Gbarbosa - BA",
+    "Gbarbosa - SE",
+    "Giga",
+]
 
 # ---------------------------------------------------------
-# ABA 1: FORMULÁRIO INTERATIVO DO COMPRADOR
+# ABA 1: FORMULÁRIO DO COMPRADOR
 # ---------------------------------------------------------
 with aba_entrada:
-    st.subheader('Alimentação Semanal de Preços pelo Comprador')
+    st.subheader("Alimentação Semanal de Compras")
     st.write(
-        'Insira os valores negociados ou cotações de referência da semana e'
-        ' clique em **Salvar Cotação**.'
+        "Selecione a bandeira, o produto e informe os dados negociados nesta"
+        " semana."
     )
 
-    with st.form(key='form_cotacao_comprador'):
-        col1, col2, col3 = st.columns(3)
+    with st.form(key="form_comprador_cencosud"):
+        col1, col2 = st.columns(2)
 
         with col1:
-            produto_sel = st.selectbox(
-                'Selecione o Produto:', options=PRODUTOS_OFICIAIS
+            bandeira_sel = st.selectbox(
+                "Bandeira Cencosud:", options=BANDEIRAS_CENCOSUD
             )
-            uf_sel = st.selectbox('Estado (UF Cencosud):', options=UFS_CENCOSUD)
+            produto_sel = st.selectbox("Produto:", options=PRODUTOS_OFICIAIS)
 
         with col2:
-            preco_mercado = st.number_input(
-                'Preço Referência Mercado / CEPEA (R$):',
-                min_value=0.0,
-                value=10.0,
-                step=0.10,
-                format='%.2f',
-            )
             custo_pago = st.number_input(
-                'Custo Pago Cencosud (R$):',
+                "Custo Pago Cencosud (R$):",
                 min_value=0.0,
-                value=10.0,
+                value=15.0,
                 step=0.10,
-                format='%.2f',
+                format="%.2f",
             )
-
-        with col3:
             fornecedor = st.text_input(
-                'Nome do Fornecedor:', value='Fornecedor Padrão'
-            )
-            data_referencia = st.date_input(
-                'Data da Negociação:', value=datetime.date.today()
+                "Fornecedor:", value="Fornecedor Parceiro"
             )
 
-        btn_salvar = st.form_submit_button(label='💾 Salvar Cotação na Base')
+        data_negocio = st.date_input(
+            "Data da Compra:", value=datetime.date.today()
+        )
 
-    if btn_salvar:
-        # Estrutura a nova linha
+        btn_salvar_comprador = st.form_submit_button(
+            label="💾 Registrar Cotação de Compra"
+        )
+
+    if btn_salvar_comprador:
         novo_registro = {
-            'Data_Cotacao': data_referencia.strftime('%Y-%m-%d'),
-            'Produto': produto_sel,
-            'UF_Cencosud': uf_sel,
-            'Preco_Mercado_BRL': preco_mercado,
-            'Custo_Pago_Cencosud': custo_pago,
-            'Fornecedor': fornecedor,
-            'Spread_BRL': custo_pago - preco_mercado,
-            'Spread_%': (
-                ((custo_pago - preco_mercado) / preco_mercado) * 100
-                if preco_mercado > 0
-                else 0
-            ),
+            "Data_Compra": data_negocio.strftime("%Y-%m-%d"),
+            "Bandeira": bandeira_sel,
+            "Produto": produto_sel,
+            "Custo_Pago_Cencosud": custo_pago,
+            "Fornecedor": fornecedor,
+            "Data_Captura": datetime.date.today().strftime("%Y-%m-%d"),
         }
 
-        # Carrega dados existentes ou cria novo arquivo
         if os.path.exists(CAMINHO_ENTRADA):
             df_existente = pd.read_excel(CAMINHO_ENTRADA)
             df_atualizado = pd.concat(
@@ -120,54 +105,86 @@ with aba_entrada:
         else:
             df_atualizado = pd.DataFrame([novo_registro])
 
-        # Salva na pasta Projeto Custo na Área de Trabalho
         df_atualizado.to_excel(CAMINHO_ENTRADA, index=False)
-        st.success(
-            f'✅ Cotação de **{produto_sel}** para **{uf_sel}** salva com sucesso'
-            f" em '{CAMINHO_ENTRADA}'!"
-        )
+        st.success("✅ Cotação registrada com sucesso na nuvem!")
 
-    # Exibe tabela das cotações da semana registradas até agora
+    st.divider()
     if os.path.exists(CAMINHO_ENTRADA):
-        st.divider()
-        st.subheader('📋 Cotações Salvas na Semana')
-        df_semana = pd.read_excel(CAMINHO_ENTRADA)
-        st.dataframe(df_semana, use_container_width=True)
+        st.subheader("📋 Cotações Registradas nesta Semana")
+        st.dataframe(pd.read_excel(CAMINHO_ENTRADA), use_container_width=True)
 
 # ---------------------------------------------------------
-# ABA 2: CRUZAMENTO COM DADOS HISTÓRICOS RETAIL
+# ABA 2: PAINEL DE INTELIGÊNCIA & HISTÓRICO
 # ---------------------------------------------------------
 with aba_analise:
-    st.subheader('Cruzamento com a Base Histórica')
+    st.subheader("Painel Geral de Inteligência Comercial")
 
-    # Verifica se o arquivo do histórico real baixado por você está na pasta
-    if os.path.exists(CAMINHO_HISTORICO):
-        df_hist_real = pd.read_excel(CAMINHO_HISTORICO)
-        st.success(
-            f"✅ Base histórica real carregada com sucesso de '{CAMINHO_HISTORICO}'!"
+    col_esq, col_dir = st.columns(2)
+
+    with col_esq:
+        st.write("**1. Referência Semanal de Mercado (CEPEA/CEAGESP)**")
+
+        df_ref_atual = (
+            pd.read_excel(CAMINHO_REFERENCIA_MERCADO)
+            if os.path.exists(CAMINHO_REFERENCIA_MERCADO)
+            else pd.DataFrame({
+                "Produto": PRODUTOS_OFICIAIS,
+                "Preco_Mercado_Referencia_BRL": [14.50, 8.20, 38.00, 42.00],
+            })
         )
-        st.dataframe(df_hist_real.head(10), use_container_width=True)
-    else:
-        st.warning(
-            f"⚠️ Cole o arquivo Excel do seu histórico real dentro da pasta **'Projeto Custo'** na Área de Trabalho com o nome exato: **'historico_real.xlsx'**."
+
+        df_editor_ref = st.data_editor(
+            df_ref_atual, num_rows="fixed", key="editor_ref_mercado"
         )
 
-    if os.path.exists(CAMINHO_ENTRADA) and os.path.exists(CAMINHO_HISTORICO):
-        if st.button('🔄 Gerar Consolidação Completa do CCI'):
-            df_cot = pd.read_excel(CAMINHO_ENTRADA)
-            df_hist = pd.read_excel(CAMINHO_HISTORICO)
+        if st.button("💾 Atualizar Referência de Mercado"):
+            df_editor_ref.to_excel(CAMINHO_REFERENCIA_MERCADO, index=False)
+            st.success("✅ Tabela de Preços de Referência atualizada!")
 
-            with pd.ExcelWriter(
-                CAMINHO_SAIDA_CONSOLIDADA, engine='openpyxl'
-            ) as writer:
-                df_cot.to_excel(
-                    writer, sheet_name='Cotacoes_Comprador', index=False
+    with col_dir:
+        st.write("**2. Base Histórica Real**")
+        if os.path.exists(CAMINHO_HISTORICO):
+            try:
+                df_hist = pd.read_excel(CAMINHO_HISTORICO)
+                st.success(
+                    f"✅ Histórico Real carregado ({len(df_hist)} linhas)."
                 )
-                df_hist.to_excel(
-                    writer, sheet_name='Historico_Real', index=False
-                )
-
-            st.balloons()
-            st.success(
-                f'🎉 Relatório Consolidado salvo em: {CAMINHO_SAIDA_CONSOLIDADA}'
+                st.dataframe(df_hist, height=200, use_container_width=True)
+            except Exception as e:
+                st.error(f"❌ Erro ao ler o arquivo: {e}")
+        else:
+            st.warning(
+                "⚠️ Suba o arquivo **historico_real.xlsx** no seu repositório"
+                " do GitHub."
             )
+
+    st.divider()
+
+    if os.path.exists(CAMINHO_ENTRADA):
+        st.subheader("📊 Cruzamento: Custo Pago vs. Preço Mercado")
+        df_compras = pd.read_excel(CAMINHO_ENTRADA)
+
+        if os.path.exists(CAMINHO_REFERENCIA_MERCADO):
+            df_ref = pd.read_excel(CAMINHO_REFERENCIA_MERCADO)
+            df_cruzado = pd.merge(df_compras, df_ref, on="Produto", how="left")
+
+            if "Preco_Mercado_Referencia_BRL" in df_cruzado.columns:
+                df_cruzado["Spread_BRL"] = (
+                    df_cruzado["Custo_Pago_Cencosud"]
+                    - df_cruzado["Preco_Mercado_Referencia_BRL"]
+                )
+                df_cruzado["Spread_%"] = (
+                    df_cruzado["Spread_BRL"]
+                    / df_cruzado["Preco_Mercado_Referencia_BRL"]
+                ) * 100
+
+                def acao(row):
+                    if row["Spread_%"] > 3.0:
+                        return "⚠️ NEGOCIAR: Custo >3% acima do mercado"
+                    elif row["Spread_%"] < 0:
+                        return "✅ EXCELENTE: Preço abaixo do mercado"
+                    else:
+                        return "➡️ DENTRO DA META: Alinhado ao benchmark"
+
+                df_cruzado["Recomendacao_CCI"] = df_cruzado.apply(acao, axis=1)
+                st.dataframe(df_cruzado, use_container_width=True)
