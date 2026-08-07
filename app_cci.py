@@ -134,10 +134,10 @@ with aba_analise:
         st.success("✅ Tabela de referência atualizada com sucesso!")
 
 # ---------------------------------------------------------
-# ABA 3: HISTÓRICO TEMPORAL COM EIXO EXCLUSIVO DE ANOS
+# ABA 3: HISTÓRICO TEMPORAL COM VISÃO MENSAL AMIGÁVEL
 # ---------------------------------------------------------
 with aba_historico:
-    st.subheader("📈 Análise Executiva e Tendência Histórica")
+    st.subheader("📈 Análise Executiva e Tendência Histórica Mensal")
 
     if CAMINHO_HISTORICO and os.path.exists(CAMINHO_HISTORICO):
         try:
@@ -213,20 +213,27 @@ with aba_historico:
 
             st.divider()
 
-            # GRÁFICO COM EIXO EXCLUSIVO DE ANOS
-            st.subheader(f"📉 Curva de Tendência Anual - {prod_selecionado}")
+            # GRÁFICO DE TENDÊNCIA MENSAL AMIGÁVEL DOS ÚLTIMOS 5 ANOS
+            st.subheader(f"📉 Curva de Tendência Mensal - {prod_selecionado}")
 
             df_5y = df_p[
                 df_p[col_data] >= (max_d - pd.DateOffset(years=5))
             ].copy()
 
-            # Extrai apenas o Ano para o eixo X do gráfico
-            df_5y["Ano"] = df_5y[col_data].dt.year.astype(str)
-
-            df_chart_ano = (
-                df_5y.groupby("Ano")["Preco_Limpo"].mean().reset_index()
+            # Agrupamento mensal padronizado
+            df_5y["Periodo"] = df_5y[col_data].dt.to_period("M")
+            df_chart_mes = (
+                df_5y.groupby("Periodo")["Preco_Limpo"].mean().reset_index()
             )
-            df_final_chart = df_chart_ano.set_index("Ano")[["Preco_Limpo"]]
+
+            # Converte para Timestamp do 1º dia de cada mês para exibição contínua
+            df_chart_mes["Data_Mensal"] = df_chart_mes[
+                "Periodo"
+            ].dt.to_timestamp()
+
+            df_final_chart = df_chart_mes.set_index("Data_Mensal")[
+                ["Preco_Limpo"]
+            ]
             df_final_chart.columns = ["Preço Médio (R$)"]
 
             st.line_chart(df_final_chart, use_container_width=True)
@@ -240,6 +247,5 @@ with aba_historico:
             st.error(f"❌ Erro ao ler o histórico: {e}")
     else:
         st.warning(
-            "⚠️ Garanta que o arquivo **historico_real.xls** está na raiz do"
-            " repositório GitHub."
+            "⚠️ Garanta que o arquivo **historico_real.xls** está no GitHub."
         )
