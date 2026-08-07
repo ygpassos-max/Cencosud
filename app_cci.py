@@ -44,12 +44,39 @@ aba_entrada, aba_matriz, aba_historico = st.tabs([
     "📈 Inteligência & Histórico Temporal",
 ])
 
-PRODUTOS_OFICIAIS = [
-    "Frango Congelado",
-    "Boi Gordo",
-    "Ovo",
-    "Suíno Vivo",
-]
+# ---------------------------------------------------------
+# CATALOGO DE CATEGORIAS, ITENS E FORNECEDORES OFICIAIS
+# ---------------------------------------------------------
+ESTRUTURA_PRODUTOS = {
+    "Bovino": ["Alcatra", "Contra Filé", "Coxão Mole", "Dianteiro"],
+    "FLV": [
+        "Ovo c/20",
+        "Batata",
+        "Cebola",
+        "Tomate",
+        "Banana",
+        "Maçã Gala",
+    ],
+    "Suíno": ["Carré Suíno"],
+    "Aves": ["Filé de Peito", "Sobrecoxa"],
+}
+
+# Mapeamento do Produto/Item para sua Commodity Referência de Mercado
+REFERENCIA_COMMODITY = {
+    "Filé de Peito": "Frango Congelado",
+    "Sobrecoxa": "Frango Congelado",
+    "Alcatra": "Boi Gordo",
+    "Contra Filé": "Boi Gordo",
+    "Coxão Mole": "Boi Gordo",
+    "Dianteiro": "Boi Gordo",
+    "Carré Suíno": "Suíno Vivo",
+    "Ovo c/20": "Ovo",
+    "Batata": "FLV Geral",
+    "Cebola": "FLV Geral",
+    "Tomate": "FLV Geral",
+    "Banana": "FLV Geral",
+    "Maçã Gala": "FLV Geral",
+}
 
 BANDEIRAS_CENCOSUD = [
     "Prezunic",
@@ -59,33 +86,70 @@ BANDEIRAS_CENCOSUD = [
     "Giga",
 ]
 
+FORNECEDORES_OFICIAIS = [
+    "BRF",
+    "Seara",
+    "JBS",
+    "Mantiqueira",
+    "Granja Faria",
+    "Genérico",
+]
+
 # ---------------------------------------------------------
-# ABA 1: FORMULÁRIO DO COMPRADOR
+# ABA 1: FORMULÁRIO DO COMPRADOR COM DADOS DINÂMICOS
 # ---------------------------------------------------------
 with aba_entrada:
     st.subheader("Alimentação Semanal de Compras")
-    with st.form(key="form_comprador"):
-        col1, col2 = st.columns(2)
-        with col1:
-            bandeira_sel = st.selectbox(
-                "Bandeira Cencosud:", options=BANDEIRAS_CENCOSUD
-            )
-            produto_sel = st.selectbox("Produto:", options=PRODUTOS_OFICIAIS)
-        with col2:
+
+    # Seleção de Categoria fora do formulário para permitir recarregamento dos itens
+    col_top1, col_top2 = st.columns(2)
+    with col_top1:
+        bandeira_sel = st.selectbox(
+            "Bandeira Cencosud:", options=BANDEIRAS_CENCOSUD, key="sel_bandeira"
+        )
+        categoria_sel = st.selectbox(
+            "Categoria do Produto:",
+            options=list(ESTRUTURA_PRODUTOS.keys()),
+            key="sel_categoria",
+        )
+
+    with col_top2:
+        fornecedor_sel = st.selectbox(
+            "Fornecedor:", options=FORNECEDORES_OFICIAIS, key="sel_fornecedor"
+        )
+        # Filtra dinamicamente os produtos de acordo com a Categoria selecionada
+        itens_disponiveis = ESTRUTURA_PRODUTOS[categoria_sel]
+        produto_sel = st.selectbox(
+            "Produto / Item Negociado:",
+            options=itens_disponiveis,
+            key="sel_produto",
+        )
+
+    with st.form(key="form_comprador_dinamico"):
+        c_form1, c_form2 = st.columns(2)
+        with c_form1:
             custo_pago = st.number_input(
                 "Cotação / Novo Custo Pago (R$):",
                 min_value=0.0,
-                value=15.0,
+                value=15.00,
                 step=0.10,
                 format="%.2f",
             )
-            fornecedor = st.text_input(
-                "Fornecedor:", value="Fornecedor Parceiro"
+        with c_form2:
+            data_negocio = st.date_input(
+                "Data da Compra:", value=datetime.date.today()
             )
 
-        data_negocio = st.date_input(
-            "Data da Compra:", value=datetime.date.today()
+        # Exibe qual Commodity de Mercado será usada como Benchmark
+        commodity_ref = REFERENCIA_COMMODITY.get(
+            produto_sel, "Mercado Geral"
         )
+        st.info(
+            f"💡 **Índice de Referência:** O item **{produto_sel}** será"
+            f" comparado com a variação da commodity **{commodity_ref}** na"
+            " Matriz de Decisão."
+        )
+
         btn_salvar = st.form_submit_button(
             label="💾 Registrar Cotação de Compra"
         )
@@ -94,11 +158,14 @@ with aba_entrada:
         novo_registro = {
             "Data_Compra": data_negocio.strftime("%Y-%m-%d"),
             "Bandeira": bandeira_sel,
+            "Categoria": categoria_sel,
             "Produto": produto_sel,
+            "Commodity_Referencia": commodity_ref,
             "Cotacao_Cencosud": custo_pago,
-            "Fornecedor": fornecedor,
+            "Fornecedor": fornecedor_sel,
             "Data_Captura": datetime.date.today().strftime("%Y-%m-%d"),
         }
+
         if os.path.exists(CAMINHO_ENTRADA):
             df_existente = pd.read_excel(CAMINHO_ENTRADA)
             df_atualizado = pd.concat(
@@ -106,13 +173,38 @@ with aba_entrada:
             )
         else:
             df_atualizado = pd.DataFrame([novo_registro])
+
         df_atualizado.to_excel(CAMINHO_ENTRADA, index=False)
-        st.success("✅ Cotação registrada com sucesso!")
+        st.success(
+            f"✅ Cotação de **{produto_sel}** ({fornecedor_sel}) registrada com"
+            " sucesso!"
+        )
 
     st.divider()
+
     if os.path.exists(CAMINHO_ENTRADA):
-        st.subheader("📋 Cotações Registradas nesta Semana")
-        st.dataframe(pd.read_excel(CAMINHO_ENTRADA), use_container_width=True)
+        st.subheader("📋 Cotações Registradas na Semana")
+        df_historico_cotacoes = pd.read_excel(CAMINHO_ENTRADA)
+
+        # Formatação visual da tabela
+        cols_view = [
+            "Data_Compra",
+            "Bandeira",
+            "Categoria",
+            "Produto",
+            "Cotacao_Cencosud",
+            "Fornecedor",
+        ]
+        cols_existentes = [
+            c for c in cols_view if c in df_historico_cotacoes.columns
+        ]
+
+        st.dataframe(
+            df_historico_cotacoes[cols_existentes].style.format({
+                "Cotacao_Cencosud": "R$ {:.2f}"
+            }, na_rep="-"),
+            use_container_width=True,
+        )
 
 # ---------------------------------------------------------
 # ABA 2: MATRIZ DE DECISÃO
@@ -131,31 +223,42 @@ with aba_matriz:
         df_ref_mkt = pd.read_excel(CAMINHO_REFERENCIA_MERCADO)
     else:
         df_ref_mkt = pd.DataFrame({
-            "Produto": PRODUTOS_OFICIAIS,
-            "Var_%_Ref_Mercado_Semanal": [1.50, -0.80, 2.10, 0.00],
-            "Var_%_Ref_Mercado_Mensal": [3.20, -1.50, 4.00, 1.20],
+            "Produto": [
+                "Frango Congelado",
+                "Boi Gordo",
+                "Ovo",
+                "Suíno Vivo",
+                "FLV Geral",
+            ],
+            "Var_%_Ref_Mercado_Semanal": [1.50, -0.80, 2.10, 0.00, 0.50],
+            "Var_%_Ref_Mercado_Mensal": [3.20, -1.50, 4.00, 1.20, 1.00],
         })
 
     if os.path.exists(CAMINHO_ENTRADA):
         df_cotacoes = pd.read_excel(CAMINHO_ENTRADA)
-        if "Custo_Pago_Cencosud" in df_cotacoes.columns and "Cotacao_Cencosud" not in df_cotacoes.columns:
+        if (
+            "Custo_Pago_Cencosud" in df_cotacoes.columns
+            and "Cotacao_Cencosud" not in df_cotacoes.columns
+        ):
             df_cotacoes["Cotacao_Cencosud"] = df_cotacoes["Custo_Pago_Cencosud"]
     else:
-        df_cotacoes = pd.DataFrame(columns=["Bandeira", "Produto", "Cotacao_Cencosud"])
+        df_cotacoes = pd.DataFrame(
+            columns=["Bandeira", "Produto", "Cotacao_Cencosud", "Fornecedor"]
+        )
 
+    # Base Padrão de Custos Vigentes
+    todos_itens = [
+        item for sublista in ESTRUTURA_PRODUTOS.values() for item in sublista
+    ]
     df_custo_sis = (
         pd.read_excel(CAMINHO_CUSTO_SISTEMA)
         if os.path.exists(CAMINHO_CUSTO_SISTEMA)
         else pd.DataFrame({
-            "Bandeira": [b for b in BANDEIRAS_CENCOSUD for _ in PRODUTOS_OFICIAIS],
-            "Produto": PRODUTOS_OFICIAIS * len(BANDEIRAS_CENCOSUD),
-            "Custo_Atual_Sistema": [
-                7.20, 225.00, 110.00, 7.00,
-                7.10, 224.00, 109.00, 6.95,
-                7.30, 226.00, 111.00, 7.05,
-                7.25, 225.50, 110.50, 7.00,
-                7.15, 223.50, 108.50, 6.90,
+            "Bandeira": [
+                b for b in BANDEIRAS_CENCOSUD for _ in range(len(todos_itens))
             ],
+            "Produto": todos_itens * len(BANDEIRAS_CENCOSUD),
+            "Custo_Atual_Sistema": [12.50] * (len(todos_itens) * len(BANDEIRAS_CENCOSUD)),
         })
     )
 
@@ -163,14 +266,38 @@ with aba_matriz:
         df_custo_f = df_custo_sis[df_custo_sis["Bandeira"] == bandeira_filtro]
         df_cot_f = df_cotacoes[df_cotacoes["Bandeira"] == bandeira_filtro]
     else:
-        df_custo_f = df_custo_sis.groupby("Produto", as_index=False)["Custo_Atual_Sistema"].mean()
+        df_custo_f = (
+            df_custo_sis.groupby("Produto", as_index=False)["Custo_Atual_Sistema"]
+            .mean()
+        )
         if not df_cotacoes.empty and "Cotacao_Cencosud" in df_cotacoes.columns:
-            df_cot_f = df_cotacoes.groupby("Produto", as_index=False)["Cotacao_Cencosud"].mean()
+            df_cot_f = (
+                df_cotacoes.groupby(["Produto", "Fornecedor"], as_index=False)[
+                    "Cotacao_Cencosud"
+                ]
+                .mean()
+            )
         else:
-            df_cot_f = pd.DataFrame(columns=["Produto", "Cotacao_Cencosud"])
+            df_cot_f = pd.DataFrame(
+                columns=["Produto", "Cotacao_Cencosud", "Fornecedor"]
+            )
 
     df_matriz = pd.merge(df_custo_f, df_cot_f, on="Produto", how="left")
-    df_matriz = pd.merge(df_matriz, df_ref_mkt, on="Produto", how="left")
+
+    # Mapeia qual é a Commodity Referência
+    df_matriz["Commodity_Referencia"] = df_matriz["Produto"].map(
+        lambda p: REFERENCIA_COMMODITY.get(p, "FLV Geral")
+    )
+
+    # Cruza com a variação da commodity correspondente
+    df_matriz = pd.merge(
+        df_matriz,
+        df_ref_mkt,
+        left_on="Commodity_Referencia",
+        right_on="Produto",
+        how="left",
+        suffixes=("", "_Mkt"),
+    )
 
     if "Cotacao_Cencosud" not in df_matriz.columns:
         df_matriz["Cotacao_Cencosud"] = None
@@ -189,7 +316,7 @@ with aba_matriz:
             return "⚪ Sem Cotação na Semana"
         var_cot = row["Var_%_Cotacao_vs_Custo"]
         var_mkt = row.get("Var_%_Ref_Mercado_Semanal", 0)
-        
+
         if pd.isna(var_mkt):
             var_mkt = 0
 
@@ -206,10 +333,12 @@ with aba_matriz:
 
     cols_exibir = [
         "Produto",
+        "Fornecedor",
         "Custo_Atual_Sistema",
         "Cotacao_Cencosud",
         "Spread_BRL",
         "Var_%_Cotacao_vs_Custo",
+        "Commodity_Referencia",
         "Var_%_Ref_Mercado_Semanal",
         "Var_%_Ref_Mercado_Mensal",
         "Diagnostico_CCI",
@@ -243,7 +372,7 @@ with aba_matriz:
             st.success("✅ Variações de Mercado salvas!")
 
 # ---------------------------------------------------------
-# ABA 3: HISTÓRICO TEMPORAL COM VARIAÇÕES MENSAL E SEMANAL
+# ABA 3: HISTÓRICO TEMPORAL COM KPIS DE MÊS E SEMANA
 # ---------------------------------------------------------
 with aba_historico:
     st.subheader("📈 Análise Executiva e Tendência Histórica Mensal")
@@ -292,9 +421,6 @@ with aba_historico:
                 by=col_data
             )
 
-            # ---------------------------------------------------------
-            # CÁLCULOS DOS KPIS COM VARIAÇÃO % (MENSAL E SEMANAL)
-            # ---------------------------------------------------------
             max_d = df_p[col_data].max()
 
             # 1. Custo Médio Último Mês vs Mês Anterior
@@ -337,15 +463,12 @@ with aba_historico:
 
             st.divider()
 
-            # EXIBIÇÃO EM 2 CARDS EXECUTIVOS COM DELTAS
             k1, k2 = st.columns(2)
-            
             k1.metric(
                 label="Custo Médio (Último Mês)",
                 value=f"R$ {custo_medio_ultimo_mes:,.2f}",
                 delta=f"{var_perc_mensal:+.2f}% vs mês anterior",
             )
-            
             k2.metric(
                 label=f"Fechamento Sexta-feira ({dt_sexta})",
                 value=f"R$ {preco_ultima_sexta:,.2f}",
