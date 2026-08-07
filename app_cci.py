@@ -25,7 +25,7 @@ CAMINHO_CUSTO_SISTEMA = os.path.join(
 )
 
 # ---------------------------------------------------------
-# EXTRAI VALORES NOMINAIS DE REFERÊNCIA (SEMANA E MÊS ANTERIOR)
+# EXTRAI VALORES DE REFERÊNCIA (SISTEMA DE PREÇOS ALINHADO COM ABA 3)
 # ---------------------------------------------------------
 @st.cache_data(ttl=3600)
 def obter_precos_referencia_historico(caminho_file):
@@ -114,30 +114,21 @@ def obter_precos_referencia_historico(caminho_file):
                     df_acumulado = df_acumulado.sort_values(by="Data_Tmp")
                     max_d = df_acumulado["Data_Tmp"].max()
 
-                    # Preço Médio Mês Anterior (30 a 60 dias atrás)
-                    df_p30 = df_acumulado[
-                        (
-                            df_acumulado["Data_Tmp"]
-                            < (max_d - pd.Timedelta(days=30))
-                        )
-                        & (
-                            df_acumulado["Data_Tmp"]
-                            >= (max_d - pd.Timedelta(days=60))
-                        )
+                    # 1. Custo Médio (Último Mês - 30 dias ativos como na Aba 3)
+                    df_u30 = df_acumulado[
+                        df_acumulado["Data_Tmp"] >= (max_d - pd.Timedelta(days=30))
                     ]
                     preco_mes_ant = (
-                        df_p30["Preco_Limpo"].mean()
-                        if not df_p30.empty
+                        df_u30["Preco_Limpo"].mean()
+                        if not df_u30.empty
                         else df_acumulado["Preco_Limpo"].mean()
                     )
 
-                    # Preço Fechamento da Sexta Anterior
+                    # 2. Fechamento da ÚLTIMA Sexta-feira Registrada
                     df_sextas = df_acumulado[
                         df_acumulado["Data_Tmp"].dt.weekday == 4
                     ]
-                    if len(df_sextas) >= 2:
-                        preco_sem_ant = df_sextas.iloc[-2]["Preco_Limpo"]
-                    elif not df_sextas.empty:
+                    if not df_sextas.empty:
                         preco_sem_ant = df_sextas.iloc[-1]["Preco_Limpo"]
                     else:
                         preco_sem_ant = df_acumulado.iloc[-1]["Preco_Limpo"]
@@ -380,7 +371,7 @@ with aba_entrada:
             )
 
 # ---------------------------------------------------------
-# ABA 2: MATRIZ DE DECISÃO (COTAÇÃO VS PREÇO HISTÓRICO REFERÊNCIA)
+# ABA 2: MATRIZ DE DECISÃO (PREÇOS DE FECHAMENTO ALINHADOS)
 # ---------------------------------------------------------
 with aba_matriz:
     st.subheader("📊 Matriz Comercial: Custo Atual vs Cotação vs Variação de Mercado")
@@ -411,7 +402,6 @@ with aba_matriz:
             options=["Todos os Fornecedores"] + todos_fornecedores,
         )
 
-    # Preços nominais históricos
     df_precos_ref = obter_precos_referencia_historico(CAMINHO_HISTORICO)
 
     if os.path.exists(CAMINHO_ENTRADA):
@@ -499,19 +489,19 @@ with aba_matriz:
     if "Cotacao_Cencosud" not in df_matriz.columns:
         df_matriz["Cotacao_Cencosud"] = None
 
-    # 1. Var Cotação vs Custo Atual em Sistema
+    # 1. Var. Cotação vs Custo Atual
     df_matriz["Var_%_Cotacao_vs_Custo"] = (
         (df_matriz["Cotacao_Cencosud"] - df_matriz["Custo_Atual_Sistema"])
         / df_matriz["Custo_Atual_Sistema"]
     ) * 100
 
-    # 2. Var Cotação vs Preço Referência Semana Anterior
+    # 2. Var. Cotação vs Fechamento Sexta-feira Anterior
     df_matriz["Var_%_Ref_Mercado_Semanal"] = (
         (df_matriz["Cotacao_Cencosud"] - df_matriz["Preco_Ref_Semana_Anterior"])
         / df_matriz["Preco_Ref_Semana_Anterior"]
     ) * 100
 
-    # 3. Var Cotação vs Preço Referência Mês Anterior
+    # 3. Var. Cotação vs Custo Médio Último Mês
     df_matriz["Var_%_Ref_Mercado_Mensal"] = (
         (df_matriz["Cotacao_Cencosud"] - df_matriz["Preco_Ref_Mes_Anterior"])
         / df_matriz["Preco_Ref_Mes_Anterior"]
