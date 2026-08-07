@@ -234,7 +234,7 @@ with aba_entrada:
             )
 
 # ---------------------------------------------------------
-# ABA 2: MATRIZ DE DECISÃO COM COLUNAS RENOMEADAS
+# ABA 2: MATRIZ DE DECISÃO (BANDEIRA E VARIAÇÕES GARANTIDAS)
 # ---------------------------------------------------------
 with aba_matriz:
     st.subheader("📊 Matriz Comercial: Custo Atual vs Cotação vs Variação de Mercado")
@@ -259,9 +259,10 @@ with aba_matriz:
             options=["Todos os Fornecedores"] + todos_fornecedores,
         )
 
-    # 1. Carrega Referências de Mercado
+    # 1. Carrega Variações da Referência de Mercado
     if os.path.exists(CAMINHO_REFERENCIA_MERCADO):
         df_ref_mkt = pd.read_excel(CAMINHO_REFERENCIA_MERCADO)
+        df_ref_mkt.columns = [str(c).strip() for c in df_ref_mkt.columns]
     else:
         df_ref_mkt = pd.DataFrame({
             "Produto": sorted([
@@ -275,7 +276,15 @@ with aba_matriz:
             "Var_%_Ref_Mercado_Mensal": [3.20, -1.50, 4.00, 1.20, 1.00],
         })
 
-    # 2. Carrega Cotações da Semana
+    # Normaliza colunas de mercado caso existam variações de nomes
+    col_var_sem = next((c for c in df_ref_mkt.columns if "seman" in c.lower()), "Var_%_Ref_Mercado_Semanal")
+    col_var_mes = next((c for c in df_ref_mkt.columns if "mes" in c.lower() or "men" in c.lower()), "Var_%_Ref_Mercado_Mensal")
+    df_ref_mkt = df_ref_mkt.rename(columns={
+        col_var_sem: "Var_%_Ref_Mercado_Semanal",
+        col_var_mes: "Var_%_Ref_Mercado_Mensal"
+    })
+
+    # 2. Carrega Cotações Semanais
     if os.path.exists(CAMINHO_ENTRADA):
         df_cotacoes = pd.read_excel(CAMINHO_ENTRADA)
         if "Custo_Pago_Cencosud" in df_cotacoes.columns and "Cotacao_Cencosud" not in df_cotacoes.columns:
@@ -285,7 +294,7 @@ with aba_matriz:
             columns=["Bandeira", "Categoria", "Produto", "Cotacao_Cencosud", "Fornecedor"]
         )
 
-    # 3. Carrega Custos do Sistema
+    # 3. Carrega Custos de Sistema
     todos_itens = sorted([
         item for sublista in ESTRUTURA_PRODUTOS.values() for item in sublista
     ])
@@ -301,15 +310,16 @@ with aba_matriz:
         })
     )
 
-    # Aplicação de Filtros
+    # Aplicação dos Filtros
     if bandeira_filtro != "Todas as Bandeiras":
-        df_custo_f = df_custo_sis[df_custo_sis["Bandeira"] == bandeira_filtro]
-        df_cot_f = df_cotacoes[df_cotacoes["Bandeira"] == bandeira_filtro]
+        df_custo_f = df_custo_sis[df_custo_sis["Bandeira"] == bandeira_filtro].copy()
+        df_cot_f = df_cotacoes[df_cotacoes["Bandeira"] == bandeira_filtro].copy()
     else:
         df_custo_f = (
             df_custo_sis.groupby("Produto", as_index=False)["Custo_Atual_Sistema"]
             .mean()
         )
+        df_custo_f["Bandeira"] = "Todas as Bandeiras"
         df_cot_f = df_cotacoes.copy()
 
     if categoria_filtro != "Todas as Categorias":
@@ -331,15 +341,18 @@ with aba_matriz:
             columns=["Produto", "Fornecedor", "Cotacao_Cencosud"]
         )
 
+    # Merge de Custos com Cotações
     df_matriz = pd.merge(df_custo_f, df_cot_f_agrupado, on="Produto", how="left")
 
+    # Mapeia Referência de Commodity
     df_matriz["Commodity_Referencia"] = df_matriz["Produto"].map(
         lambda p: REFERENCIA_COMMODITY.get(p, "FLV Geral")
     )
 
+    # Merge com Tabela de Referência do Mercado
     df_matriz = pd.merge(
         df_matriz,
-        df_ref_mkt,
+        df_ref_mkt[["Produto", "Var_%_Ref_Mercado_Semanal", "Var_%_Ref_Mercado_Mensal"]],
         left_on="Commodity_Referencia",
         right_on="Produto",
         how="left",
@@ -349,6 +362,7 @@ with aba_matriz:
     if "Cotacao_Cencosud" not in df_matriz.columns:
         df_matriz["Cotacao_Cencosud"] = None
 
+    # Cálculos
     df_matriz["Var_%_Cotacao_vs_Custo"] = (
         (df_matriz["Cotacao_Cencosud"] - df_matriz["Custo_Atual_Sistema"])
         / df_matriz["Custo_Atual_Sistema"]
@@ -403,8 +417,11 @@ with aba_matriz:
 
     st.divider()
 
-    # MAPEAMENTO E RENOMEAÇÃO EXECUTIVA DAS COLUNAS
+    # DICIONÁRIO E ORDENAÇÃO DE COLUNAS SOLICITADA
     dicionario_colunas = {
+        "Bandeira": "Bandeira",
+        "Produto": "Produto",
+        "Fornecedor": "Fornecedor",
         "Custo_Atual_Sistema": "Custo Atual",
         "Cotacao_Cencosud": "Cotação",
         "Spread_BRL": "Spread R$",
@@ -415,7 +432,8 @@ with aba_matriz:
         "Diagnostico_CCI": "Alerta",
     }
 
-    cols_ordem = [
+    cols_ordem_exata = [
+        "Bandeira",
         "Produto",
         "Fornecedor",
         "Custo_Atual_Sistema",
@@ -428,13 +446,12 @@ with aba_matriz:
         "Diagnostico_CCI",
     ]
 
-    if "Bandeira" in df_matriz.columns:
-        cols_ordem.insert(0, "Bandeira")
+    # Garante que todas as colunas estejam no dataframe
+    for c in cols_ordem_exata:
+        if c not in df_matriz.columns:
+            df_matriz[c] = None
 
-    cols_existentes = [c for c in cols_ordem if c in df_matriz.columns]
-    
-    # Gera DataFrame final com nomes limpos
-    df_exibicao = df_matriz[cols_existentes].rename(columns=dicionario_colunas)
+    df_exibicao = df_matriz[cols_ordem_exata].rename(columns=dicionario_colunas)
 
     st.dataframe(
         df_exibicao.style.format({
