@@ -20,12 +20,72 @@ else:
     CAMINHO_HISTORICO = None
 
 CAMINHO_ENTRADA = os.path.join(PASTA_PROJETO, "cotacoes_semanais.xlsx")
-CAMINHO_REFERENCIA_MERCADO = os.path.join(
-    PASTA_PROJETO, "referencia_mercado.xlsx"
-)
 CAMINHO_CUSTO_SISTEMA = os.path.join(
     PASTA_PROJETO, "custo_atual_sistema.xlsx"
 )
+
+# ---------------------------------------------------------
+# FUNÇÃO PARA CALCULAR VARIAÇÃO DE REFERÊNCIA DIRETO DO HISTÓRICO REAL
+# ---------------------------------------------------------
+@st.cache_data(ttl=3600)
+def obter_variacoes_historico_real(caminho_file):
+    variacoes = {}
+    if caminho_file and os.path.exists(caminho_file):
+        try:
+            xls = pd.ExcelFile(caminho_file)
+            mapa_abas = {
+                "Frango Congelado": ("Frango Congelado", "À vista R$"),
+                "Boi Gordo": ("Boi ", "À vista R$"),
+                "Ovo": ("Ovos", "Branco"),
+                "Suíno Vivo": ("Suino Vivo", "SP"),
+            }
+
+            for comm, (aba_nome, col_p) in mapa_abas.items():
+                if aba_nome in xls.sheet_names:
+                    df = pd.read_excel(caminho_file, sheet_name=aba_nome, skiprows=1)
+                    df.columns = [str(c).strip() for c in df.columns]
+                    col_dt = next((c for c in df.columns if "data" in c.lower()), df.columns[0])
+                    df[col_dt] = pd.to_datetime(df[col_dt], format="%d/%m/%Y", errors="coerce")
+                    
+                    df["Preco_Limpo"] = pd.to_numeric(df[col_p], errors="coerce")
+                    df = df.dropna(subset=[col_dt, "Preco_Limpo"]).sort_values(by=col_dt)
+                    
+                    if not df.empty:
+                        max_d = df[col_dt].max()
+                        
+                        # 1. Variação Mensal (Últimos 30d vs 30d Anteriores)
+                        df_u30 = df[df[col_dt] >= (max_d - pd.Timedelta(days=30))]
+                        df_p30 = df[(df[col_dt] < (max_d - pd.Timedelta(days=30))) & (df[col_dt] >= (max_d - pd.Timedelta(days=60)))]
+                        
+                        m_u30 = df_u30["Preco_Limpo"].mean()
+                        m_p30 = df_p30["Preco_Limpo"].mean()
+                        v_mes = ((m_u30 - m_p30) / m_p30 * 100) if (pd.notnull(m_p30) and m_p30 > 0) else 0.0
+                        
+                        # 2. Variação Semanal (Última Sexta vs Sexta Anterior)
+                        df_sextas = df[df[col_dt].dt.weekday == 4]
+                        if len(df_sextas) >= 2:
+                            p_sex1 = df_sextas.iloc[-1]["Preco_Limpo"]
+                            p_sex2 = df_sextas.iloc[-2]["Preco_Limpo"]
+                            v_sem = ((p_sex1 - p_sex2) / p_sex2 * 100) if p_sex2 > 0 else 0.0
+                        else:
+                            v_sem = 0.0
+                        
+                        variacoes[comm] = {
+                            "Var_%_Ref_Mercado_Semanal": v_sem,
+                            "Var_%_Ref_Mercado_Mensal": v_mes
+                        }
+        except Exception:
+            pass
+
+    # Defaults para commodities sem histórico
+    commodities_padrao = ["Frango Congelado", "Boi Gordo", "Ovo", "Suíno Vivo", "FLV Geral"]
+    for c in commodities_padrao:
+        if c not in variacoes:
+            variacoes[c] = {"Var_%_Ref_Mercado_Semanal": 0.0, "Var_%_Ref_Mercado_Mensal": 0.0}
+
+    df_res = pd.DataFrame.from_dict(variacoes, orient="index").reset_index()
+    df_res.columns = ["Produto", "Var_%_Ref_Mercado_Semanal", "Var_%_Ref_Mercado_Mensal"]
+    return df_res
 
 # ---------------------------------------------------------
 # CONFIGURAÇÃO DE TELA
@@ -36,24 +96,21 @@ st.set_page_config(
     layout="wide",
 )
 
-# CABEÇALHO EXECUTIVO COM LOGO VIVA PERECÍVEIS
+# CABEÇALHO EXECUTIVO
 col_logo1, col_logo2 = st.columns([1, 4])
 with col_logo1:
     caminho_logo_local = os.path.join(PASTA_PROJETO, "logo_viva.png")
     if os.path.exists(caminho_logo_local):
-        st.image(caminho_logo_local, width=160)
+        st.image(caminho_logo_local, width=150)
     else:
         st.image(
             "https://raw.githubusercontent.com/ygpassos-max/Cencosud/main/logo_viva.png",
-            width=160,
+            width=150,
         )
 
 with col_logo2:
     st.title("🛒 Ferramenta de Negociação Cencosud")
-    st.caption(
-        "Programa VIVA Perecíveis • Inteligência Comercial e Monitoramento de"
-        " Custos"
-    )
+    st.caption("Programa VIVA Perecíveis • Inteligência Comercial e Monitoramento de Custos")
 
 st.divider()
 
@@ -63,9 +120,7 @@ aba_entrada, aba_matriz, aba_historico = st.tabs([
     "📈 Inteligência & Histórico Temporal",
 ])
 
-# ---------------------------------------------------------
 # CATALOGO ORDENADO ALFABETICAMENTE
-# ---------------------------------------------------------
 ESTRUTURA_PRODUTOS = {
     "Aves": sorted(["Filé de Peito", "Sobrecoxa"]),
     "Bovino": sorted(["Alcatra", "Contra Filé", "Coxão Mole", "Dianteiro"]),
@@ -165,7 +220,7 @@ with aba_entrada:
             )
 
         commodity_ref = REFERENCIA_COMMODITY.get(
-            produto_sel, "Mercado Geral"
+            produto_sel, "FLV Geral"
         )
         st.info(
             f"💡 **Índice de Referência:** O item **{produto_sel}** será"
@@ -234,7 +289,7 @@ with aba_entrada:
             )
 
 # ---------------------------------------------------------
-# ABA 2: MATRIZ DE DECISÃO (BANDEIRA E VARIAÇÕES GARANTIDAS)
+# ABA 2: MATRIZ DE DECISÃO (AUTO-CALCULADA DO HISTÓRICO REAL E COMPACTA)
 # ---------------------------------------------------------
 with aba_matriz:
     st.subheader("📊 Matriz Comercial: Custo Atual vs Cotação vs Variação de Mercado")
@@ -259,32 +314,10 @@ with aba_matriz:
             options=["Todos os Fornecedores"] + todos_fornecedores,
         )
 
-    # 1. Carrega Variações da Referência de Mercado
-    if os.path.exists(CAMINHO_REFERENCIA_MERCADO):
-        df_ref_mkt = pd.read_excel(CAMINHO_REFERENCIA_MERCADO)
-        df_ref_mkt.columns = [str(c).strip() for c in df_ref_mkt.columns]
-    else:
-        df_ref_mkt = pd.DataFrame({
-            "Produto": sorted([
-                "Frango Congelado",
-                "Boi Gordo",
-                "Ovo",
-                "Suíno Vivo",
-                "FLV Geral",
-            ]),
-            "Var_%_Ref_Mercado_Semanal": [1.50, -0.80, 2.10, 0.00, 0.50],
-            "Var_%_Ref_Mercado_Mensal": [3.20, -1.50, 4.00, 1.20, 1.00],
-        })
+    # 1. Puxa as Variações Reais do Histórico da Aba 3
+    df_ref_mkt = obter_variacoes_historico_real(CAMINHO_HISTORICO)
 
-    # Normaliza colunas de mercado caso existam variações de nomes
-    col_var_sem = next((c for c in df_ref_mkt.columns if "seman" in c.lower()), "Var_%_Ref_Mercado_Semanal")
-    col_var_mes = next((c for c in df_ref_mkt.columns if "mes" in c.lower() or "men" in c.lower()), "Var_%_Ref_Mercado_Mensal")
-    df_ref_mkt = df_ref_mkt.rename(columns={
-        col_var_sem: "Var_%_Ref_Mercado_Semanal",
-        col_var_mes: "Var_%_Ref_Mercado_Mensal"
-    })
-
-    # 2. Carrega Cotações Semanais
+    # 2. Carrega Cotações Semanalmente
     if os.path.exists(CAMINHO_ENTRADA):
         df_cotacoes = pd.read_excel(CAMINHO_ENTRADA)
         if "Custo_Pago_Cencosud" in df_cotacoes.columns and "Cotacao_Cencosud" not in df_cotacoes.columns:
@@ -294,7 +327,7 @@ with aba_matriz:
             columns=["Bandeira", "Categoria", "Produto", "Cotacao_Cencosud", "Fornecedor"]
         )
 
-    # 3. Carrega Custos de Sistema
+    # 3. Custos em Sistema
     todos_itens = sorted([
         item for sublista in ESTRUTURA_PRODUTOS.values() for item in sublista
     ])
@@ -310,7 +343,7 @@ with aba_matriz:
         })
     )
 
-    # Aplicação dos Filtros
+    # Filtros
     if bandeira_filtro != "Todas as Bandeiras":
         df_custo_f = df_custo_sis[df_custo_sis["Bandeira"] == bandeira_filtro].copy()
         df_cot_f = df_cotacoes[df_cotacoes["Bandeira"] == bandeira_filtro].copy()
@@ -319,7 +352,7 @@ with aba_matriz:
             df_custo_sis.groupby("Produto", as_index=False)["Custo_Atual_Sistema"]
             .mean()
         )
-        df_custo_f["Bandeira"] = "Todas as Bandeiras"
+        df_custo_f["Bandeira"] = "Todas"
         df_cot_f = df_cotacoes.copy()
 
     if categoria_filtro != "Todas as Categorias":
@@ -341,18 +374,17 @@ with aba_matriz:
             columns=["Produto", "Fornecedor", "Cotacao_Cencosud"]
         )
 
-    # Merge de Custos com Cotações
+    # Cruzamento de tabelas
     df_matriz = pd.merge(df_custo_f, df_cot_f_agrupado, on="Produto", how="left")
 
-    # Mapeia Referência de Commodity
     df_matriz["Commodity_Referencia"] = df_matriz["Produto"].map(
         lambda p: REFERENCIA_COMMODITY.get(p, "FLV Geral")
     )
 
-    # Merge com Tabela de Referência do Mercado
+    # Cruza com Variações Reais do Mercado
     df_matriz = pd.merge(
         df_matriz,
-        df_ref_mkt[["Produto", "Var_%_Ref_Mercado_Semanal", "Var_%_Ref_Mercado_Mensal"]],
+        df_ref_mkt,
         left_on="Commodity_Referencia",
         right_on="Produto",
         how="left",
@@ -374,7 +406,7 @@ with aba_matriz:
 
     def diagnostico(row):
         if pd.isna(row["Cotacao_Cencosud"]):
-            return "⚪ Sem Cotação na Semana"
+            return "⚪ Sem Cotação"
         var_cot = row["Var_%_Cotacao_vs_Custo"]
         var_mkt = row.get("Var_%_Ref_Mercado_Semanal", 0)
 
@@ -382,17 +414,17 @@ with aba_matriz:
             var_mkt = 0
 
         if var_cot > (var_mkt + 1.5):
-            return "🔴 ALERTA: Alta acima do mercado"
+            return "🔴 ALERTA"
         elif var_cot < var_mkt:
-            return "🟢 EXCELENTE: Preço abaixo do mercado"
+            return "🟢 EXCELENTE"
         else:
-            return "🟡 DENTRO DA META: Alinhado ao mercado"
+            return "🟡 ALINHADO"
 
     df_matriz["Diagnostico_CCI"] = df_matriz.apply(diagnostico, axis=1)
 
     st.divider()
 
-    # CARDS DE VISÃO EXECUTIVA
+    # CARDS DE PERFORMANCE
     df_cotadas = df_matriz.dropna(subset=["Cotacao_Cencosud"])
     total_cotados = len(df_cotadas)
     qtd_alertas = len(
@@ -417,7 +449,7 @@ with aba_matriz:
 
     st.divider()
 
-    # DICIONÁRIO E ORDENAÇÃO DE COLUNAS SOLICITADA
+    # DICIONÁRIO E CONFIGURAÇÃO COMPACTA PARA NÃO TER BARRA DE ROLAGEM HORIZONTAL
     dicionario_colunas = {
         "Bandeira": "Bandeira",
         "Produto": "Produto",
@@ -425,10 +457,10 @@ with aba_matriz:
         "Custo_Atual_Sistema": "Custo Atual",
         "Cotacao_Cencosud": "Cotação",
         "Spread_BRL": "Spread R$",
-        "Var_%_Cotacao_vs_Custo": "Var. Cotação Vs. Custo",
-        "Commodity_Referencia": "Referencia",
-        "Var_%_Ref_Mercado_Semanal": "Var. Ref. Sem. Ant.",
-        "Var_%_Ref_Mercado_Mensal": "Var. Ref. Mes Ant.",
+        "Var_%_Cotacao_vs_Custo": "Var. Cotação",
+        "Commodity_Referencia": "Referência",
+        "Var_%_Ref_Mercado_Semanal": "Var. Ref. Sem.",
+        "Var_%_Ref_Mercado_Mensal": "Var. Ref. Mês",
         "Diagnostico_CCI": "Alerta",
     }
 
@@ -446,31 +478,42 @@ with aba_matriz:
         "Diagnostico_CCI",
     ]
 
-    # Garante que todas as colunas estejam no dataframe
     for c in cols_ordem_exata:
         if c not in df_matriz.columns:
             df_matriz[c] = None
 
     df_exibicao = df_matriz[cols_ordem_exata].rename(columns=dicionario_colunas)
 
+    # Exibição compacta e 100% responsiva na largura da tela
     st.dataframe(
         df_exibicao.style.format({
             "Custo Atual": "R$ {:.2f}",
             "Cotação": "R$ {:.2f}",
             "Spread R$": "R$ {:.2f}",
-            "Var. Cotação Vs. Custo": "{:.2f}%",
-            "Var. Ref. Sem. Ant.": "{:.2f}%",
-            "Var. Ref. Mes Ant.": "{:.2f}%",
+            "Var. Cotação": "{:.2f}%",
+            "Var. Ref. Sem.": "{:.2f}%",
+            "Var. Ref. Mês": "{:.2f}%",
         }, na_rep="-"),
         use_container_width=True,
+        column_config={
+            "Bandeira": st.column_config.TextColumn("Bandeira", width="small"),
+            "Produto": st.column_config.TextColumn("Produto", width="medium"),
+            "Fornecedor": st.column_config.TextColumn("Fornecedor", width="small"),
+            "Custo Atual": st.column_config.NumberColumn("Custo Atual", width="small"),
+            "Cotação": st.column_config.NumberColumn("Cotação", width="small"),
+            "Spread R$": st.column_config.NumberColumn("Spread R$", width="small"),
+            "Var. Cotação": st.column_config.NumberColumn("Var. Cotação", width="small"),
+            "Referência": st.column_config.TextColumn("Referência", width="small"),
+            "Var. Ref. Sem.": st.column_config.NumberColumn("Var. Ref. Sem.", width="small"),
+            "Var. Ref. Mês": st.column_config.NumberColumn("Var. Ref. Mês", width="small"),
+            "Alerta": st.column_config.TextColumn("Alerta", width="small"),
+        }
     )
 
-    # BOTÃO DE EXPORTAÇÃO EXCEL
+    # EXPORTAÇÃO EXCEL
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df_exibicao.to_excel(
-            writer, index=False, sheet_name="Matriz_Negociacao"
-        )
+        df_exibicao.to_excel(writer, index=False, sheet_name="Matriz_Negociacao")
     excel_data = output.getvalue()
 
     st.download_button(
@@ -479,33 +522,6 @@ with aba_matriz:
         file_name=f"Matriz_Negociacao_Cencosud_{datetime.date.today()}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
-
-    st.divider()
-
-    # PAINEL DO GESTOR
-    with st.expander(
-        "⚙️ Painel do Gestor: Atualizar Variação da Referência de Mercado & Custos em Sistema"
-    ):
-        tab_g1, tab_g2 = st.tabs([
-            "📈 Variações de Mercado (CEPEA)",
-            "📋 Custos Vigentes em Sistema",
-        ])
-
-        with tab_g1:
-            df_editor_ref = st.data_editor(
-                df_ref_mkt, num_rows="fixed", key="editor_matriz_ref"
-            )
-            if st.button("💾 Salvar Variações de Mercado"):
-                df_editor_ref.to_excel(CAMINHO_REFERENCIA_MERCADO, index=False)
-                st.success("✅ Variações de Mercado salvas!")
-
-        with tab_g2:
-            df_editor_custo = st.data_editor(
-                df_custo_sis, num_rows="dynamic", key="editor_matriz_custo"
-            )
-            if st.button("💾 Salvar Custos em Sistema"):
-                df_editor_custo.to_excel(CAMINHO_CUSTO_SISTEMA, index=False)
-                st.success("✅ Custos em Sistema atualizados!")
 
 # ---------------------------------------------------------
 # ABA 3: HISTÓRICO TEMPORAL
