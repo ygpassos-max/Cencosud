@@ -3,9 +3,11 @@ import os
 import pandas as pd
 import streamlit as st
 
+# ---------------------------------------------------------
+# DIRETÓRIO DE ARMAZENAMENTO COMPATÍVEL COM NUVEM & LOCAL
+# ---------------------------------------------------------
 PASTA_PROJETO = os.path.dirname(os.path.abspath(__file__))
 
-# Aceita tanto .xls quanto .xlsx
 CAMINHO_HISTORICO_XLS = os.path.join(PASTA_PROJETO, "historico_real.xls")
 CAMINHO_HISTORICO_XLSX = os.path.join(PASTA_PROJETO, "historico_real.xlsx")
 
@@ -21,6 +23,9 @@ CAMINHO_REFERENCIA_MERCADO = os.path.join(
     PASTA_PROJETO, "referencia_mercado.xlsx"
 )
 
+# ---------------------------------------------------------
+# CONFIGURAÇÃO DE TELA STREAMLIT
+# ---------------------------------------------------------
 st.set_page_config(
     page_title="Cencosud Commodity Intelligence (CCI)",
     page_icon="🥩",
@@ -46,7 +51,7 @@ BANDEIRAS_CENCOSUD = [
 ]
 
 # ---------------------------------------------------------
-# ABA 1: FORMULÁRIO COMPRADOR
+# ABA 1: FORMULÁRIO DO COMPRADOR (SEMANAL)
 # ---------------------------------------------------------
 with aba_entrada:
     st.subheader("Alimentação Semanal de Compras")
@@ -97,10 +102,11 @@ with aba_entrada:
 
     st.divider()
     if os.path.exists(CAMINHO_ENTRADA):
+        st.subheader("📋 Cotações Registradas na Semana")
         st.dataframe(pd.read_excel(CAMINHO_ENTRADA), use_container_width=True)
 
 # ---------------------------------------------------------
-# ABA 2: MATRIZ DE MERCADO
+# ABA 2: MATRIZ DE REFERÊNCIA DE MERCADO
 # ---------------------------------------------------------
 with aba_analise:
     st.subheader("Gestão do Preço Referência de Mercado (CEPEA/CEAGESP)")
@@ -125,10 +131,10 @@ with aba_analise:
     )
     if st.button("💾 Atualizar Referência de Mercado"):
         df_editor_ref.to_excel(CAMINHO_REFERENCIA_MERCADO, index=False)
-        st.success("✅ Tabela atualizada!")
+        st.success("✅ Tabela de referência atualizada com sucesso!")
 
 # ---------------------------------------------------------
-# ABA 3: HISTÓRICO REAL MULTI-ABAS CEPEA
+# ABA 3: HISTÓRICO TEMPORAL COM EIXO EXCLUSIVO DE ANOS
 # ---------------------------------------------------------
 with aba_historico:
     st.subheader("📈 Análise Executiva e Tendência Histórica")
@@ -143,13 +149,11 @@ with aba_historico:
                 options=abas_disponiveis,
             )
 
-            # Lê a aba selecionada ignorando o título da linha 1
             df_p = pd.read_excel(
                 CAMINHO_HISTORICO, sheet_name=prod_selecionado, skiprows=1
             )
             df_p.columns = [str(c).strip() for c in df_p.columns]
 
-            # Identifica Coluna de Data
             col_data = next(
                 (c for c in df_p.columns if "data" in c.lower()), df_p.columns[0]
             )
@@ -157,7 +161,6 @@ with aba_historico:
                 df_p[col_data], format="%d/%m/%Y", errors="coerce"
             )
 
-            # Identifica Coluna de Preço por Regras da Categoria
             aba_str = str(prod_selecionado).strip().lower()
 
             if "ovos" in aba_str or "ovo" in aba_str:
@@ -173,7 +176,6 @@ with aba_historico:
                 col_preco = "À vista R$"
                 st.info("ℹ️ Exibindo cotação de **Frango Congelado (R$)**.")
 
-            # Limpeza de Valores
             df_p["Preco_Limpo"] = pd.to_numeric(
                 df_p[col_preco], errors="coerce"
             )
@@ -181,12 +183,11 @@ with aba_historico:
                 by=col_data
             )
 
-            # CARDS DE KPIS
+            # CARDS DE KPIS HISTÓRICOS
             max_d = df_p[col_data].max()
             df_30d = df_p[df_p[col_data] >= (max_d - pd.Timedelta(days=30))]
             custo_medio_30d = df_30d["Preco_Limpo"].mean()
 
-            # Preço da Última Sexta-feira Registrada
             df_sextas = df_p[df_p[col_data].dt.weekday == 4]
             if not df_sextas.empty:
                 preco_sexta = df_sextas.iloc[-1]["Preco_Limpo"]
@@ -212,25 +213,20 @@ with aba_historico:
 
             st.divider()
 
-            # GRÁFICO DE TENDÊNCIA LIMPO DOS ÚLTIMOS 5 ANOS (AGRUPADO POR MÊS)
-            st.subheader(
-                f"📉 Curva de Tendência Mensal dos Últimos 5 Anos -"
-                f" {prod_selecionado}"
-            )
+            # GRÁFICO COM EIXO EXCLUSIVO DE ANOS
+            st.subheader(f"📉 Curva de Tendência Anual - {prod_selecionado}")
 
             df_5y = df_p[
                 df_p[col_data] >= (max_d - pd.DateOffset(years=5))
             ].copy()
-            df_5y["Ano_Mes"] = df_5y[col_data].dt.to_period("M")
 
-            df_chart_data = (
-                df_5y.groupby("Ano_Mes")["Preco_Limpo"].mean().reset_index()
+            # Extrai apenas o Ano para o eixo X do gráfico
+            df_5y["Ano"] = df_5y[col_data].dt.year.astype(str)
+
+            df_chart_ano = (
+                df_5y.groupby("Ano")["Preco_Limpo"].mean().reset_index()
             )
-            df_chart_data["Data_Plot"] = df_chart_data[
-                "Ano_Mes"
-            ].dt.to_timestamp()
-
-            df_final_chart = df_chart_data.set_index("Data_Plot")[["Preco_Limpo"]]
+            df_final_chart = df_chart_ano.set_index("Ano")[["Preco_Limpo"]]
             df_final_chart.columns = ["Preço Médio (R$)"]
 
             st.line_chart(df_final_chart, use_container_width=True)
