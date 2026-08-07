@@ -25,7 +25,7 @@ CAMINHO_CUSTO_SISTEMA = os.path.join(
 )
 
 # ---------------------------------------------------------
-# PROCESSADOR UNIVERSAL DE HISTÓRICO REAL
+# PROCESSADOR UNIVERSAL DE HISTÓRICO REAL ITEM A ITEM
 # ---------------------------------------------------------
 @st.cache_data(ttl=3600)
 def obter_variacoes_historico_real(caminho_file):
@@ -38,16 +38,11 @@ def obter_variacoes_historico_real(caminho_file):
                 "Boi Gordo": ["Boi ", "Boi"],
                 "Ovo": ["Ovos", "Ovo"],
                 "Suíno Vivo": ["Suino Vivo", "Suino"],
-                "FLV Geral": [
-                    "Banana",
-                    "Batata",
-                    "Tomate",
-                    "Maça",
-                    "Maca",
-                    "Cebola",
-                    "Ovos",
-                    "Ovo",
-                ],
+                "Banana": ["Banana"],
+                "Batata": ["Batata"],
+                "Cebola": ["Cebola"],
+                "Maçã Gala": ["Maça", "Maca", "Maçã"],
+                "Tomate": ["Tomate"],
             }
 
             for comm_ref, abas_possiveis in mapa_referencias.items():
@@ -168,7 +163,11 @@ def obter_variacoes_historico_real(caminho_file):
         "Boi Gordo",
         "Ovo",
         "Suíno Vivo",
-        "FLV Geral",
+        "Banana",
+        "Batata",
+        "Cebola",
+        "Maçã Gala",
+        "Tomate",
     ]:
         if c not in variacoes:
             variacoes[c] = {
@@ -257,11 +256,11 @@ REFERENCIA_COMMODITY = {
     "Dianteiro": "Boi Gordo",
     "Carré Suíno": "Suíno Vivo",
     "Ovos c/20": "Ovo",
-    "Banana": "FLV Geral",
-    "Batata": "FLV Geral",
-    "Cebola": "FLV Geral",
-    "Maçã Gala": "FLV Geral",
-    "Tomate": "FLV Geral",
+    "Banana": "Banana",
+    "Batata": "Batata",
+    "Cebola": "Cebola",
+    "Maçã Gala": "Maçã Gala",
+    "Tomate": "Tomate",
 }
 
 BANDEIRAS_CENCOSUD = sorted([
@@ -320,11 +319,11 @@ with aba_entrada:
             )
 
         commodity_ref = REFERENCIA_COMMODITY.get(
-            produto_sel, "FLV Geral"
+            produto_sel, produto_sel
         )
         st.info(
             f"💡 **Índice de Referência:** O item **{produto_sel}** será"
-            f" comparado com a variação da commodity **{commodity_ref}** na"
+            f" comparado com a variação da referência **{commodity_ref}** na"
             " Matriz de Decisão."
         )
 
@@ -389,7 +388,7 @@ with aba_entrada:
             )
 
 # ---------------------------------------------------------
-# ABA 2: MATRIZ DE DECISÃO
+# ABA 2: MATRIZ DE DECISÃO (REFERÊNCIAS DIRETAS DE CADA FLV)
 # ---------------------------------------------------------
 with aba_matriz:
     st.subheader("📊 Matriz Comercial: Custo Atual vs Cotação vs Variação de Mercado")
@@ -492,7 +491,7 @@ with aba_matriz:
     df_matriz = pd.merge(df_custo_f, df_cot_f_agrupado, on="Produto", how="left")
 
     df_matriz["Commodity_Referencia"] = df_matriz["Produto"].map(
-        lambda p: REFERENCIA_COMMODITY.get(p, "FLV Geral")
+        lambda p: REFERENCIA_COMMODITY.get(p, p)
     )
 
     df_matriz = pd.merge(
@@ -654,7 +653,7 @@ with aba_matriz:
     )
 
 # ---------------------------------------------------------
-# ABA 3: HISTÓRICO TEMPORAL (OVOS EM FLV)
+# ABA 3: HISTÓRICO TEMPORAL
 # ---------------------------------------------------------
 with aba_historico:
     st.subheader("📈 Análise Executiva e Tendência Histórica Mensal")
@@ -664,7 +663,6 @@ with aba_historico:
             xls = pd.ExcelFile(CAMINHO_HISTORICO)
             todas_abas = sorted(xls.sheet_names)
 
-            # Ovos categorizados oficialmente em FLV
             abas_flv = [
                 a
                 for a in todas_abas
