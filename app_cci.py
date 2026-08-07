@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 # ---------------------------------------------------------
-# DIRETÓRIO DE ARMAZENAMENTO COMPATÍVEL COM NUVEM & LOCAL
+# DIRETÓRIOS E ARQUIVOS NUVEM & LOCAL
 # ---------------------------------------------------------
 PASTA_PROJETO = os.path.dirname(os.path.abspath(__file__))
 
@@ -22,9 +22,12 @@ CAMINHO_ENTRADA = os.path.join(PASTA_PROJETO, "cotacoes_semanais.xlsx")
 CAMINHO_REFERENCIA_MERCADO = os.path.join(
     PASTA_PROJETO, "referencia_mercado.xlsx"
 )
+CAMINHO_CUSTO_SISTEMA = os.path.join(
+    PASTA_PROJETO, "custo_atual_sistema.xlsx"
+)
 
 # ---------------------------------------------------------
-# CONFIGURAÇÃO DE TELA STREAMLIT
+# CONFIGURAÇÃO DE TELA
 # ---------------------------------------------------------
 st.set_page_config(
     page_title="Cencosud Commodity Intelligence (CCI)",
@@ -35,13 +38,19 @@ st.set_page_config(
 st.title("🥩 Cencosud Commodity Intelligence (CCI)")
 st.caption("Plataforma de Inteligência Comercial e Análise de Tendências")
 
-aba_entrada, aba_analise, aba_historico = st.tabs([
+aba_entrada, aba_matriz, aba_historico = st.tabs([
     "📝 Entrada Comprador (Semanal)",
-    "📊 Matriz de Referência de Mercado",
+    "📊 Matriz de Decisão & Spreads",
     "📈 Inteligência & Histórico Temporal",
 ])
 
-PRODUTOS_OFICIAIS = ["Frango Congelado", "Boi Gordo", "Ovo", "Suíno Vivo"]
+PRODUTOS_OFICIAIS = [
+    "Frango Congelado",
+    "Boi Gordo",
+    "Ovo",
+    "Suíno Vivo",
+]
+
 BANDEIRAS_CENCOSUD = [
     "Prezunic",
     "Bretas",
@@ -51,7 +60,7 @@ BANDEIRAS_CENCOSUD = [
 ]
 
 # ---------------------------------------------------------
-# ABA 1: FORMULÁRIO DO COMPRADOR (SEMANAL)
+# ABA 1: FORMULÁRIO DO COMPRADOR
 # ---------------------------------------------------------
 with aba_entrada:
     st.subheader("Alimentação Semanal de Compras")
@@ -64,7 +73,7 @@ with aba_entrada:
             produto_sel = st.selectbox("Produto:", options=PRODUTOS_OFICIAIS)
         with col2:
             custo_pago = st.number_input(
-                "Novo Custo Pago Cencosud (R$):",
+                "Cotação / Novo Custo Pago (R$):",
                 min_value=0.0,
                 value=15.0,
                 step=0.10,
@@ -86,7 +95,7 @@ with aba_entrada:
             "Data_Compra": data_negocio.strftime("%Y-%m-%d"),
             "Bandeira": bandeira_sel,
             "Produto": produto_sel,
-            "Custo_Pago_Cencosud": custo_pago,
+            "Cotacao_Cencosud": custo_pago,
             "Fornecedor": fornecedor,
             "Data_Captura": datetime.date.today().strftime("%Y-%m-%d"),
         }
@@ -102,39 +111,134 @@ with aba_entrada:
 
     st.divider()
     if os.path.exists(CAMINHO_ENTRADA):
-        st.subheader("📋 Cotações Registradas na Semana")
+        st.subheader("📋 Cotações Registradas nesta Semana")
         st.dataframe(pd.read_excel(CAMINHO_ENTRADA), use_container_width=True)
 
 # ---------------------------------------------------------
-# ABA 2: MATRIZ DE REFERÊNCIA DE MERCADO
+# ABA 2: MATRIZ DE DECISÃO COM FILTRO DE BANDEIRA E SPREADS
 # ---------------------------------------------------------
-with aba_analise:
-    st.subheader("Gestão do Preço Referência de Mercado (CEPEA/CEAGESP)")
-    df_ref_atual = (
-        pd.read_excel(CAMINHO_REFERENCIA_MERCADO)
-        if os.path.exists(CAMINHO_REFERENCIA_MERCADO)
-        else pd.DataFrame({
+with aba_matriz:
+    st.subheader("📊 Matriz Comercial: Custo Atual vs Cotação vs Variação de Mercado")
+
+    c_filt1, c_filt2 = st.columns([1, 2])
+    with c_filt1:
+        bandeira_filtro = st.selectbox(
+            "🔍 Filtrar por Bandeira Cencosud:",
+            options=["Todas as Bandeiras"] + BANDEIRAS_CENCOSUD,
+        )
+
+    # 1. Carrega ou Inicializa Tabela de Variações de Mercado
+    if os.path.exists(CAMINHO_REFERENCIA_MERCADO):
+        df_ref_mkt = pd.read_excel(CAMINHO_REFERENCIA_MERCADO)
+    else:
+        df_ref_mkt = pd.DataFrame({
             "Produto": PRODUTOS_OFICIAIS,
-            "Preco_Mercado_Atual": [7.50, 230.00, 115.00, 7.20],
-            "Unidade_Medida": [
-                "R$ / Kg",
-                "R$ / @",
-                "R$ / Caixa CIF SP",
-                "R$ / Kg SP",
+            "Var_%_Ref_Mercado_Semanal": [1.50, -0.80, 2.10, 0.00],
+            "Var_%_Ref_Mercado_Mensal": [3.20, -1.50, 4.00, 1.20],
+        })
+
+    # 2. Carrega Cotações e Custos em Sistema
+    df_cotacoes = (
+        pd.read_excel(CAMINHO_ENTRADA)
+        if os.path.exists(CAMINHO_ENTRADA)
+        else pd.DataFrame(columns=["Bandeira", "Produto", "Cotacao_Cencosud"])
+    )
+
+    df_custo_sis = (
+        pd.read_excel(CAMINHO_CUSTO_SISTEMA)
+        if os.path.exists(CAMINHO_CUSTO_SISTEMA)
+        else pd.DataFrame({
+            "Bandeira": [b for b in BANDEIRAS_CENCOSUD for _ in PRODUTOS_OFICIAIS],
+            "Produto": PRODUTOS_OFICIAIS * len(BANDEIRAS_CENCOSUD),
+            "Custo_Atual_Sistema": [
+                7.20, 225.00, 110.00, 7.00,
+                7.10, 224.00, 109.00, 6.95,
+                7.30, 226.00, 111.00, 7.05,
+                7.25, 225.50, 110.50, 7.00,
+                7.15, 223.50, 108.50, 6.90,
             ],
-            "Preco_Mercado_Semana_Anterior": [7.40, 228.00, 112.00, 7.10],
-            "Preco_Mercado_Mes_Anterior": [7.20, 225.00, 110.00, 6.90],
         })
     )
-    df_editor_ref = st.data_editor(
-        df_ref_atual, num_rows="fixed", key="editor_ref_mercado"
+
+    # Aplicação do Filtro de Bandeira
+    if bandeira_filtro != "Todas as Bandeiras":
+        df_custo_f = df_custo_sis[df_custo_sis["Bandeira"] == bandeira_filtro]
+        df_cot_f = df_cotacoes[df_cotacoes["Bandeira"] == bandeira_filtro]
+    else:
+        df_custo_f = df_custo_sis.groupby("Produto")["Custo_Atual_Sistema"].mean().reset_index()
+        df_cot_f = df_cotacoes.groupby("Produto")["Cotacao_Cencosud"].mean().reset_index()
+
+    # Cruzamento dos Dados
+    df_matriz = pd.merge(df_custo_f, df_cot_f, on="Produto", how="left")
+    df_matriz = pd.merge(df_matriz, df_ref_mkt, on="Produto", how="left")
+
+    # Cálculos de Variação e Spread
+    df_matriz["Var_%_Cotacao_vs_Custo"] = (
+        (df_matriz["Cotacao_Cencosud"] - df_matriz["Custo_Atual_Sistema"])
+        / df_matriz["Custo_Atual_Sistema"]
+    ) * 100
+
+    df_matriz["Spread_BRL"] = (
+        df_matriz["Cotacao_Cencosud"] - df_matriz["Custo_Atual_Sistema"]
     )
-    if st.button("💾 Atualizar Referência de Mercado"):
-        df_editor_ref.to_excel(CAMINHO_REFERENCIA_MERCADO, index=False)
-        st.success("✅ Tabela de referência atualizada com sucesso!")
+
+    def diagnostico(row):
+        if pd.isna(row["Cotacao_Cencosud"]):
+            return "⚪ Sem Cotação na Semana"
+        var_cot = row["Var_%_Cotacao_vs_Custo"]
+        var_mkt = row["Var_%_Ref_Mercado_Semanal"]
+        
+        if var_cot > (var_mkt + 1.5):
+            return "🔴 ALERTA: Alta acima da tendência do mercado"
+        elif var_cot < var_mkt:
+            return "🟢 EXCELENTE: Negociação abaixo do mercado"
+        else:
+            return "🟡 DENTRO DA META: Alinhado ao mercado"
+
+    df_matriz["Diagnostico_CCI"] = df_matriz.apply(diagnostico, axis=1)
+
+    st.divider()
+
+    # Exibição Formatada da Matriz
+    cols_exibir = [
+        "Produto",
+        "Custo_Atual_Sistema",
+        "Cotacao_Cencosud",
+        "Spread_BRL",
+        "Var_%_Cotacao_vs_Custo",
+        "Var_%_Ref_Mercado_Semanal",
+        "Var_%_Ref_Mercado_Mensal",
+        "Diagnostico_CCI",
+    ]
+
+    if "Bandeira" in df_matriz.columns:
+        cols_exibir.insert(0, "Bandeira")
+
+    st.dataframe(
+        df_matriz[cols_exibir].style.format({
+            "Custo_Atual_Sistema": "R$ {:.2f}",
+            "Cotacao_Cencosud": "R$ {:.2f}",
+            "Spread_BRL": "R$ {:.2f}",
+            "Var_%_Cotacao_vs_Custo": "{:.2f}%",
+            "Var_%_Ref_Mercado_Semanal": "{:.2f}%",
+            "Var_%_Ref_Mercado_Mensal": "{:.2f}%",
+        }, na_rep="-"),
+        use_container_width=True,
+    )
+
+    st.divider()
+
+    # Bloco para Atualização Semanal dos Parâmetros de Mercado
+    with st.expander("⚙️ Painel do Gestor: Atualizar Variação da Referência de Mercado"):
+        df_editor_ref = st.data_editor(
+            df_ref_mkt, num_rows="fixed", key="editor_matriz_ref"
+        )
+        if st.button("💾 Salvar Variações de Mercado"):
+            df_editor_ref.to_excel(CAMINHO_REFERENCIA_MERCADO, index=False)
+            st.success("✅ Variações de Mercado salvas!")
 
 # ---------------------------------------------------------
-# ABA 3: HISTÓRICO TEMPORAL COM VISÃO MENSAL AMIGÁVEL
+# ABA 3: HISTÓRICO TEMPORAL
 # ---------------------------------------------------------
 with aba_historico:
     st.subheader("📈 Análise Executiva e Tendência Histórica Mensal")
@@ -183,7 +287,6 @@ with aba_historico:
                 by=col_data
             )
 
-            # CARDS DE KPIS HISTÓRICOS
             max_d = df_p[col_data].max()
             df_30d = df_p[df_p[col_data] >= (max_d - pd.Timedelta(days=30))]
             custo_medio_30d = df_30d["Preco_Limpo"].mean()
@@ -212,21 +315,16 @@ with aba_historico:
             )
 
             st.divider()
-
-            # GRÁFICO DE TENDÊNCIA MENSAL AMIGÁVEL DOS ÚLTIMOS 5 ANOS
             st.subheader(f"📉 Curva de Tendência Mensal - {prod_selecionado}")
 
             df_5y = df_p[
                 df_p[col_data] >= (max_d - pd.DateOffset(years=5))
             ].copy()
 
-            # Agrupamento mensal padronizado
             df_5y["Periodo"] = df_5y[col_data].dt.to_period("M")
             df_chart_mes = (
                 df_5y.groupby("Periodo")["Preco_Limpo"].mean().reset_index()
             )
-
-            # Converte para Timestamp do 1º dia de cada mês para exibição contínua
             df_chart_mes["Data_Mensal"] = df_chart_mes[
                 "Periodo"
             ].dt.to_timestamp()
