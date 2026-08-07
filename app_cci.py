@@ -5,16 +5,7 @@ import streamlit as st
 
 PASTA_PROJETO = os.path.dirname(os.path.abspath(__file__))
 
-CAMINHO_HISTORICO_XLSX = os.path.join(PASTA_PROJETO, "historico_real.xlsx")
-CAMINHO_HISTORICO_XLS = os.path.join(PASTA_PROJETO, "historico_real.xls")
-
-if os.path.exists(CAMINHO_HISTORICO_XLSX):
-    CAMINHO_HISTORICO = CAMINHO_HISTORICO_XLSX
-elif os.path.exists(CAMINHO_HISTORICO_XLS):
-    CAMINHO_HISTORICO = CAMINHO_HISTORICO_XLS
-else:
-    CAMINHO_HISTORICO = None
-
+CAMINHO_HISTORICO = os.path.join(PASTA_PROJETO, "historico_real.xlsx")
 CAMINHO_ENTRADA = os.path.join(PASTA_PROJETO, "cotacoes_semanais.xlsx")
 CAMINHO_REFERENCIA_MERCADO = os.path.join(
     PASTA_PROJETO, "referencia_mercado.xlsx"
@@ -127,201 +118,120 @@ with aba_analise:
         st.success("✅ Tabela atualizada!")
 
 # ---------------------------------------------------------
-# ABA 3: HISTÓRICO FLEXÍVEL (SISTEMA ANTI-ERRO DE LEITURA)
+# ABA 3: HISTÓRICO DIRETO E PERFEITO
 # ---------------------------------------------------------
 with aba_historico:
     st.subheader("📈 Análise Executiva e Tendência Histórica")
 
-    if CAMINHO_HISTORICO and os.path.exists(CAMINHO_HISTORICO):
+    if os.path.exists(CAMINHO_HISTORICO):
         try:
-            # Tenta ler ignorando possíveis linhas em branco no topo do Excel
-            df_raw = None
-            for skip in range(5):
-                try:
-                    df_temp = pd.read_excel(CAMINHO_HISTORICO, skiprows=skip)
-                    df_temp.columns = [
-                        str(c).strip() for c in df_temp.columns
-                    ]
-                    # Procura se encontrou colunas válidas
-                    if len(df_temp.columns) > 1 and not df_temp.empty:
-                        df_raw = df_temp
-                        break
-                except Exception:
-                    continue
+            df_h = pd.read_excel(CAMINHO_HISTORICO)
 
-            if df_raw is None or df_raw.empty:
-                st.error(
-                    "❌ Não foi possível identificar as colunas do arquivo de"
-                    " histórico."
-                )
-            else:
-                # 1. Busca Coluna de Data
-                col_data = None
-                for col in df_raw.columns:
-                    if (
-                        "data" in col.lower()
-                        or "date" in col.lower()
-                        if col
-                        else False
-                    ):
-                        col_data = col
-                        break
+            # Padroniza nomes das colunas
+            df_h.columns = [str(c).strip().capitalize() for c in df_h.columns]
 
-                if not col_data:
-                    col_data = df_raw.columns[0]
+            if (
+                "Data" in df_h.columns
+                and "Produto" in df_h.columns
+                and "Preco" in df_h.columns
+            ):
+                df_h["Data"] = pd.to_datetime(df_h["Data"], errors="coerce")
+                df_h["Preco"] = pd.to_numeric(df_h["Preco"], errors="coerce")
+                df_h = df_h.dropna().sort_values(by="Data")
 
-                df_raw[col_data] = pd.to_datetime(
-                    df_raw[col_data], errors="coerce"
-                )
-                df_raw = df_raw.dropna(subset=[col_data]).sort_values(
-                    by=col_data
+                # Seletor de Produto
+                prods_unicos = list(df_h["Produto"].unique())
+                prod_selecionado = st.selectbox(
+                    "🔍 Selecione o Produto:", options=prods_unicos
                 )
 
-                # 2. Busca Coluna de Produto ou Mapeia Colunas Indiviuais
-                col_prod = None
-                for col in df_raw.columns:
-                    if "prod" in col.lower() or "item" in col.lower():
-                        col_prod = col
-                        break
+                df_p = df_h[df_h["Produto"] == prod_selecionado].copy()
 
-                # Caso exista uma coluna "Produto"
-                if col_prod:
-                    produtos_lista = [
-                        str(p).strip()
-                        for p in df_raw[col_prod].dropna().unique()
-                    ]
-                    prod_sel = st.selectbox(
-                        "🔍 Selecione o Produto:", options=produtos_lista
-                    )
-                    df_p = df_raw[df_raw[col_prod] == prod_sel].copy()
-
-                    col_val = next(
-                        (
-                            c
-                            for c in df_p.columns
-                            if "preco" in c.lower()
-                            or "custo" in c.lower()
-                            or "valor" in c.lower()
-                            or "brl" in c.lower()
-                        ),
-                        df_p.select_dtypes(include=["number"]).columns[0],
-                    )
-
-                    df_p["Preco_Limpo"] = pd.to_numeric(
-                        df_p[col_val], errors="coerce"
-                    )
-
-                # Caso cada coluna seja um produto diferente
-                else:
-                    cols_opcoes = [
-                        c
-                        for c in df_raw.columns
-                        if c != col_data and "unnamed" not in c.lower()
-                    ]
-                    prod_sel = st.selectbox(
-                        "🔍 Selecione o Produto:", options=cols_opcoes
-                    )
-
-                    df_p = pd.DataFrame({
-                        col_data: df_raw[col_data],
-                        "Preco_Limpo": pd.to_numeric(
-                            df_raw[prod_sel]
-                            .astype(str)
-                            .str.replace("R$", "", regex=False)
-                            .str.replace(".", "", regex=False)
-                            .str.replace(",", ".", regex=False)
-                            .str.strip(),
-                            errors="coerce",
-                        ),
-                    })
-
-                df_p = df_p.dropna(subset=["Preco_Limpo", col_data])
-
-                # REGRA DE REGIONALIZAÇÃO/MOEDA
-                p_lower = str(prod_sel).lower()
-                if "frango" in p_lower or "boi" in p_lower:
+                # Mensagens de Regra do Produto
+                p_str = str(prod_selecionado).lower()
+                if "frango" in p_str or "boi" in p_str:
                     st.info(
                         f"ℹ️ Exibindo cotação oficial em **Reais (R$)** para"
-                        f" **{prod_sel}**."
+                        f" **{prod_selecionado}**."
                     )
-                elif "ovo" in p_lower:
+                elif "ovo" in p_str:
                     st.info(
                         "ℹ️ Exibindo cotação **CIF Região Grande SP** para"
                         " Ovos."
                     )
-                elif "suino" in p_lower:
+                elif "suino" in p_str:
                     st.info("ℹ️ Exibindo cotação para **Suíno Vivo (SP)**.")
 
-                # CARDS DE KPIS
-                # 1. Custo Médio do Último Mês
-                max_d = df_p[col_data].max()
-                df_30d = df_p[df_p[col_data] >= (max_d - pd.Timedelta(days=30))]
-                custo_medio_30d = df_30d["Preco_Limpo"].mean()
+                # Cálculos dos KPIs
+                max_d = df_p["Data"].max()
+                df_30d = df_p[df_p["Data"] >= (max_d - pd.Timedelta(days=30))]
+                custo_medio_30d = df_30d["Preco"].mean()
 
-                # 2. Fechamento de Sexta-Feira
-                df_sextas = df_p[df_p[col_data].dt.weekday == 4]
+                # Fechamento de Sexta
+                df_sextas = df_p[df_p["Data"].dt.weekday == 4]
                 if not df_sextas.empty:
-                    preco_sexta = df_sextas.iloc[-1]["Preco_Limpo"]
-                    dt_sexta = df_sextas.iloc[-1][col_data].strftime("%d/%m/%Y")
+                    preco_sexta = df_sextas.iloc[-1]["Preco"]
+                    dt_sexta = df_sextas.iloc[-1]["Data"].strftime("%d/%m/%Y")
                 else:
-                    preco_sexta = df_p.iloc[-1]["Preco_Limpo"]
-                    dt_sexta = df_p.iloc[-1][col_data].strftime("%d/%m/%Y")
+                    preco_sexta = df_p.iloc[-1]["Preco"]
+                    dt_sexta = df_p.iloc[-1]["Data"].strftime("%d/%m/%Y")
 
                 st.divider()
                 k1, k2, k3 = st.columns(3)
                 k1.metric(
                     label="Custo Médio (Último Mês)",
-                    value=(
-                        f"R$ {custo_medio_30d:,.2f}"
-                        if pd.notnull(custo_medio_30d)
-                        else "N/A"
-                    ),
+                    value=f"R$ {custo_medio_30d:,.2f}",
                 )
                 k2.metric(
                     label=f"Fechamento Sexta-feira ({dt_sexta})",
-                    value=(
-                        f"R$ {preco_sexta:,.2f}"
-                        if pd.notnull(preco_sexta)
-                        else "N/A"
-                    ),
+                    value=f"R$ {preco_sexta:,.2f}",
                 )
                 k3.metric(
-                    label="Total de Registros na Base",
+                    label="Volume de Registros",
                     value=f"{len(df_p)} cotações",
                 )
 
                 st.divider()
 
-                # GRÁFICO DE TENDÊNCIA CONTINUA (ÚLTIMOS 5 ANOS AGRUPADO POR MÊS)
+                # Gráfico de Tendência (Últimos 5 Anos agrupado por Mês)
                 st.subheader(
-                    f"📉 Curva de Tendência Histórica (Últimos 5 Anos) -"
-                    f" {prod_sel}"
+                    f"📉 Curva de Tendência Mensal -"
+                    f" {prod_selecionado}"
                 )
 
                 df_5y = df_p[
-                    df_p[col_data] >= (max_d - pd.DateOffset(years=5))
+                    df_p["Data"] >= (max_d - pd.DateOffset(years=5))
                 ].copy()
-                df_5y["Ano_Mês"] = df_5y[col_data].dt.to_period("M")
+                df_5y["Ano_Mes"] = df_5y["Data"].dt.to_period("M")
 
-                df_tend = (
-                    df_5y.groupby("Ano_Mês")["Preco_Limpo"].mean().reset_index()
+                df_chart_data = (
+                    df_5y.groupby("Ano_Mes")["Preco"].mean().reset_index()
                 )
-                df_tend["Data"] = df_tend["Ano_Mês"].dt.to_timestamp()
+                df_chart_data["Data_Plot"] = df_chart_data[
+                    "Ano_Mes"
+                ].dt.to_timestamp()
 
-                df_chart = df_tend.set_index("Data")[["Preco_Limpo"]]
-                df_chart.columns = ["Preço Médio (R$)"]
+                df_final_chart = df_chart_data.set_index("Data_Plot")[["Preco"]]
+                df_final_chart.columns = ["Preço Médio (R$)"]
 
-                st.line_chart(df_chart, use_container_width=True)
+                st.line_chart(df_final_chart, use_container_width=True)
 
-                with st.expander("📋 Ver Dados Brutos em Tabela"):
+                with st.expander("📋 Ver Tabela de Dados"):
                     st.dataframe(
-                        df_p[[col_data, "Preco_Limpo"]],
+                        df_p[["Data", "Produto", "Preco"]],
                         use_container_width=True,
                     )
 
+            else:
+                st.error(
+                    "❌ As colunas da planilha precisam se chamar exatamente:"
+                    " **Data**, **Produto** e **Preco**."
+                )
+
         except Exception as e:
-            st.error(f"❌ Erro ao processar o histórico: {e}")
+            st.error(f"❌ Erro ao ler a planilha: {e}")
     else:
         st.warning(
-            "⚠️ O arquivo de histórico não foi localizado no repositório."
+            "⚠️ Suba o arquivo **historico_real.xlsx** com as colunas Data,"
+            " Produto e Preco no GitHub."
         )
