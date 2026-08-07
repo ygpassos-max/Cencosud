@@ -25,7 +25,7 @@ CAMINHO_CUSTO_SISTEMA = os.path.join(
 )
 
 # ---------------------------------------------------------
-# PROCESSADOR UNIVERSAL PARA AMBOS OS FORMATOS DE PLANILHA
+# PROCESSADOR UNIVERSAL DE HISTÓRICO REAL
 # ---------------------------------------------------------
 @st.cache_data(ttl=3600)
 def obter_variacoes_historico_real(caminho_file):
@@ -45,6 +45,8 @@ def obter_variacoes_historico_real(caminho_file):
                     "Maça",
                     "Maca",
                     "Cebola",
+                    "Ovos",
+                    "Ovo",
                 ],
             }
 
@@ -52,7 +54,6 @@ def obter_variacoes_historico_real(caminho_file):
                 df_acumulado = pd.DataFrame()
                 for aba in abas_possiveis:
                     if aba in xls.sheet_names:
-                        # Testa se é o novo formato (com coluna 'Dia' na linha 1)
                         df_teste = pd.read_excel(
                             caminho_file, sheet_name=aba, nrows=2
                         )
@@ -118,7 +119,6 @@ def obter_variacoes_historico_real(caminho_file):
                     df_acumulado = df_acumulado.sort_values(by="Data_Tmp")
                     max_d = df_acumulado["Data_Tmp"].max()
 
-                    # Variação Mensal
                     df_u30 = df_acumulado[
                         df_acumulado["Data_Tmp"] >= (max_d - pd.Timedelta(days=30))
                     ]
@@ -141,7 +141,6 @@ def obter_variacoes_historico_real(caminho_file):
                         else 0.0
                     )
 
-                    # Variação Semanal
                     df_sextas = df_acumulado[
                         df_acumulado["Data_Tmp"].dt.weekday == 4
                     ]
@@ -421,7 +420,6 @@ with aba_matriz:
             options=["Todos os Fornecedores"] + todos_fornecedores,
         )
 
-    # Variações calculadas direto da nova estrutura de abas
     df_ref_mkt = obter_variacoes_historico_real(CAMINHO_HISTORICO)
 
     if os.path.exists(CAMINHO_ENTRADA):
@@ -656,7 +654,7 @@ with aba_matriz:
     )
 
 # ---------------------------------------------------------
-# ABA 3: HISTÓRICO TEMPORAL MULTI-FORMATO
+# ABA 3: HISTÓRICO TEMPORAL (OVOS EM FLV)
 # ---------------------------------------------------------
 with aba_historico:
     st.subheader("📈 Análise Executiva e Tendência Histórica Mensal")
@@ -664,14 +662,48 @@ with aba_historico:
     if CAMINHO_HISTORICO and os.path.exists(CAMINHO_HISTORICO):
         try:
             xls = pd.ExcelFile(CAMINHO_HISTORICO)
-            abas_disponiveis = sorted(xls.sheet_names)
+            todas_abas = sorted(xls.sheet_names)
 
-            prod_selecionado = st.selectbox(
-                "🔍 Selecione a Categoria de Produto:",
-                options=abas_disponiveis,
+            # Ovos categorizados oficialmente em FLV
+            abas_flv = [
+                a
+                for a in todas_abas
+                if a in [
+                    "Banana",
+                    "Batata",
+                    "Cebola",
+                    "Maça",
+                    "Maca",
+                    "Tomate",
+                    "Ovos",
+                    "Ovo",
+                ]
+            ]
+            abas_proteinas = [a for a in todas_abas if a not in abas_flv]
+
+            col_macro, col_prod = st.columns(2)
+
+            with col_macro:
+                macro_sel = st.selectbox(
+                    "🔍 Filtrar por Categoria:",
+                    options=["Proteínas", "FLV"],
+                    key="sel_macro_aba3",
+                )
+
+            options_produtos = (
+                abas_proteinas if macro_sel == "Proteínas" else abas_flv
             )
 
-            # Teste de formato da aba
+            if not options_produtos:
+                options_produtos = todas_abas
+
+            with col_prod:
+                prod_selecionado = st.selectbox(
+                    "🔍 Selecione o Produto:",
+                    options=options_produtos,
+                    key="sel_prod_aba3",
+                )
+
             df_teste = pd.read_excel(
                 CAMINHO_HISTORICO, sheet_name=prod_selecionado, nrows=2
             )
@@ -726,7 +758,8 @@ with aba_historico:
                 if "ovos" in aba_str or "ovo" in aba_str:
                     col_preco = "Branco"
                     st.info(
-                        "ℹ️ Exibindo cotação **CIF Região Grande SP** para Ovos."
+                        "ℹ️ Exibindo cotação **CIF Região Grande SP** para Ovos"
+                        " (FLV)."
                     )
                 elif "suino" in aba_str:
                     col_preco = "SP"
