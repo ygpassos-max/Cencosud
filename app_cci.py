@@ -30,13 +30,24 @@ CAMINHO_CUSTO_SISTEMA = os.path.join(
 # CONFIGURAÇÃO DE TELA
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="Cencosud Commodity Intelligence (CCI)",
+    page_title="Ferramenta de Negociação Cencosud",
     page_icon="🥩",
     layout="wide",
 )
 
-st.title("🥩 Cencosud Commodity Intelligence (CCI)")
-st.caption("Plataforma de Inteligência Comercial e Análise de Tendências")
+# CABEÇALHO EXECUTIVO COM LOGO VIVA PERECÍVEIS
+col_logo1, col_logo2 = st.columns([1, 4])
+with col_logo1:
+    # URL pública do logo VIVA Perecíveis
+    st.image(
+        "https://raw.githubusercontent.com/ygpassos-max/Cencosud/main/logo_viva.png",
+        width=160,
+    )
+with col_logo2:
+    st.title("🛒 Ferramenta de Negociação Cencosud")
+    st.caption("Programa VIVA Perecíveis • Inteligência Comercial e Monitoramento de Custos")
+
+st.divider()
 
 aba_entrada, aba_matriz, aba_historico = st.tabs([
     "📝 Entrada Comprador (Semanal)",
@@ -116,7 +127,6 @@ with aba_entrada:
         )
 
     with col_top2:
-        # Filtra e ordena fornecedores dinamicamente pela categoria
         fornecedores_disponiveis = FORNECEDORES_POR_CATEGORIA.get(
             categoria_sel, sorted(["Genérico"])
         )
@@ -124,7 +134,6 @@ with aba_entrada:
             "Fornecedor:", options=fornecedores_disponiveis, key="sel_fornecedor"
         )
 
-        # Filtra e ordena produtos dinamicamente pela categoria
         itens_disponiveis = ESTRUTURA_PRODUTOS[categoria_sel]
         produto_sel = st.selectbox(
             "Produto / Item Negociado:",
@@ -188,9 +197,14 @@ with aba_entrada:
 
     st.divider()
 
+    # TABELA MINIMIZADA E ORDENADA (MAIS RECENTE PRIMEIRO)
     if os.path.exists(CAMINHO_ENTRADA):
-        st.subheader("📋 Cotações Registradas na Semana")
         df_historico_cotacoes = pd.read_excel(CAMINHO_ENTRADA)
+
+        # Ordena para exibir a cotação mais recente no topo
+        df_historico_cotacoes = df_historico_cotacoes.iloc[::-1].reset_index(
+            drop=True
+        )
 
         cols_view = [
             "Data_Compra",
@@ -204,12 +218,13 @@ with aba_entrada:
             c for c in cols_view if c in df_historico_cotacoes.columns
         ]
 
-        st.dataframe(
-            df_historico_cotacoes[cols_existentes].style.format({
-                "Cotacao_Cencosud": "R$ {:.2f}"
-            }, na_rep="-"),
-            use_container_width=True,
-        )
+        with st.expander("📋 Ver Cotações Registradas na Semana (Mais recentes primeiro)"):
+            st.dataframe(
+                df_historico_cotacoes[cols_existentes].style.format({
+                    "Cotacao_Cencosud": "R$ {:.2f}"
+                }, na_rep="-"),
+                use_container_width=True,
+            )
 
 # ---------------------------------------------------------
 # ABA 2: MATRIZ DE DECISÃO
@@ -425,7 +440,6 @@ with aba_historico:
 
             max_d = df_p[col_data].max()
 
-            # Custo Médio Último Mês vs Mês Anterior
             df_ultimo_mes = df_p[df_p[col_data] >= (max_d - pd.Timedelta(days=30))]
             custo_medio_ultimo_mes = df_ultimo_mes["Preco_Limpo"].mean()
 
@@ -443,7 +457,6 @@ with aba_historico:
             else:
                 var_perc_mensal = 0.0
 
-            # Fechamento Última Sexta vs Sexta Anterior
             df_sextas = df_p[df_p[col_data].dt.weekday == 4]
             if len(df_sextas) >= 2:
                 preco_ultima_sexta = df_sextas.iloc[-1]["Preco_Limpo"]
