@@ -45,23 +45,35 @@ aba_entrada, aba_matriz, aba_historico = st.tabs([
 ])
 
 # ---------------------------------------------------------
-# CATALOGO DE CATEGORIAS, ITENS E FORNECEDORES OFICIAIS
+# CATALOGO ORDENADO ALFABETICAMENTE
 # ---------------------------------------------------------
 ESTRUTURA_PRODUTOS = {
-    "Bovino": ["Alcatra", "Contra Filé", "Coxão Mole", "Dianteiro"],
-    "FLV": [
-        "Ovo c/20",
+    "Aves": sorted(["Filé de Peito", "Sobrecoxa"]),
+    "Bovino": sorted(["Alcatra", "Contra Filé", "Coxão Mole", "Dianteiro"]),
+    "FLV": sorted([
+        "Banana",
         "Batata",
         "Cebola",
-        "Tomate",
-        "Banana",
         "Maçã Gala",
-    ],
-    "Suíno": ["Carré Suíno"],
-    "Aves": ["Filé de Peito", "Sobrecoxa"],
+        "Ovos c/20",
+        "Tomate",
+    ]),
+    "Suíno": sorted(["Carré Suíno"]),
 }
 
-# Mapeamento do Produto/Item para sua Commodity Referência de Mercado
+FORNECEDORES_POR_CATEGORIA = {
+    "Aves": sorted(["BRF", "Genérico", "Seara", "SSA"]),
+    "Bovino": sorted(["Genérico", "JBS"]),
+    "FLV": sorted([
+        "Distribuidor",
+        "Granja Faria",
+        "Importação",
+        "Mantiqueira",
+        "Produtor",
+    ]),
+    "Suíno": sorted(["BRF", "Genérico", "Seara"]),
+}
+
 REFERENCIA_COMMODITY = {
     "Filé de Peito": "Frango Congelado",
     "Sobrecoxa": "Frango Congelado",
@@ -70,38 +82,28 @@ REFERENCIA_COMMODITY = {
     "Coxão Mole": "Boi Gordo",
     "Dianteiro": "Boi Gordo",
     "Carré Suíno": "Suíno Vivo",
-    "Ovo c/20": "Ovo",
+    "Ovos c/20": "Ovo",
+    "Banana": "FLV Geral",
     "Batata": "FLV Geral",
     "Cebola": "FLV Geral",
-    "Tomate": "FLV Geral",
-    "Banana": "FLV Geral",
     "Maçã Gala": "FLV Geral",
+    "Tomate": "FLV Geral",
 }
 
-BANDEIRAS_CENCOSUD = [
-    "Prezunic",
+BANDEIRAS_CENCOSUD = sorted([
     "Bretas",
     "Gbarbosa - BA",
     "Gbarbosa - SE",
     "Giga",
-]
-
-FORNECEDORES_OFICIAIS = [
-    "BRF",
-    "Seara",
-    "JBS",
-    "Mantiqueira",
-    "Granja Faria",
-    "Genérico",
-]
+    "Prezunic",
+])
 
 # ---------------------------------------------------------
-# ABA 1: FORMULÁRIO DO COMPRADOR COM DADOS DINÂMICOS
+# ABA 1: FORMULÁRIO DO COMPRADOR
 # ---------------------------------------------------------
 with aba_entrada:
     st.subheader("Alimentação Semanal de Compras")
 
-    # Seleção de Categoria fora do formulário para permitir recarregamento dos itens
     col_top1, col_top2 = st.columns(2)
     with col_top1:
         bandeira_sel = st.selectbox(
@@ -109,15 +111,20 @@ with aba_entrada:
         )
         categoria_sel = st.selectbox(
             "Categoria do Produto:",
-            options=list(ESTRUTURA_PRODUTOS.keys()),
+            options=sorted(list(ESTRUTURA_PRODUTOS.keys())),
             key="sel_categoria",
         )
 
     with col_top2:
-        fornecedor_sel = st.selectbox(
-            "Fornecedor:", options=FORNECEDORES_OFICIAIS, key="sel_fornecedor"
+        # Filtra e ordena fornecedores dinamicamente pela categoria
+        fornecedores_disponiveis = FORNECEDORES_POR_CATEGORIA.get(
+            categoria_sel, sorted(["Genérico"])
         )
-        # Filtra dinamicamente os produtos de acordo com a Categoria selecionada
+        fornecedor_sel = st.selectbox(
+            "Fornecedor:", options=fornecedores_disponiveis, key="sel_fornecedor"
+        )
+
+        # Filtra e ordena produtos dinamicamente pela categoria
         itens_disponiveis = ESTRUTURA_PRODUTOS[categoria_sel]
         produto_sel = st.selectbox(
             "Produto / Item Negociado:",
@@ -129,7 +136,7 @@ with aba_entrada:
         c_form1, c_form2 = st.columns(2)
         with c_form1:
             custo_pago = st.number_input(
-                "Cotação / Novo Custo Pago (R$):",
+                "Cotação (R$):",
                 min_value=0.0,
                 value=15.00,
                 step=0.10,
@@ -137,10 +144,9 @@ with aba_entrada:
             )
         with c_form2:
             data_negocio = st.date_input(
-                "Data da Compra:", value=datetime.date.today()
+                "Data Cotação:", value=datetime.date.today()
             )
 
-        # Exibe qual Commodity de Mercado será usada como Benchmark
         commodity_ref = REFERENCIA_COMMODITY.get(
             produto_sel, "Mercado Geral"
         )
@@ -186,7 +192,6 @@ with aba_entrada:
         st.subheader("📋 Cotações Registradas na Semana")
         df_historico_cotacoes = pd.read_excel(CAMINHO_ENTRADA)
 
-        # Formatação visual da tabela
         cols_view = [
             "Data_Compra",
             "Bandeira",
@@ -223,13 +228,13 @@ with aba_matriz:
         df_ref_mkt = pd.read_excel(CAMINHO_REFERENCIA_MERCADO)
     else:
         df_ref_mkt = pd.DataFrame({
-            "Produto": [
+            "Produto": sorted([
                 "Frango Congelado",
                 "Boi Gordo",
                 "Ovo",
                 "Suíno Vivo",
                 "FLV Geral",
-            ],
+            ]),
             "Var_%_Ref_Mercado_Semanal": [1.50, -0.80, 2.10, 0.00, 0.50],
             "Var_%_Ref_Mercado_Mensal": [3.20, -1.50, 4.00, 1.20, 1.00],
         })
@@ -246,10 +251,9 @@ with aba_matriz:
             columns=["Bandeira", "Produto", "Cotacao_Cencosud", "Fornecedor"]
         )
 
-    # Base Padrão de Custos Vigentes
-    todos_itens = [
+    todos_itens = sorted([
         item for sublista in ESTRUTURA_PRODUTOS.values() for item in sublista
-    ]
+    ])
     df_custo_sis = (
         pd.read_excel(CAMINHO_CUSTO_SISTEMA)
         if os.path.exists(CAMINHO_CUSTO_SISTEMA)
@@ -284,12 +288,10 @@ with aba_matriz:
 
     df_matriz = pd.merge(df_custo_f, df_cot_f, on="Produto", how="left")
 
-    # Mapeia qual é a Commodity Referência
     df_matriz["Commodity_Referencia"] = df_matriz["Produto"].map(
         lambda p: REFERENCIA_COMMODITY.get(p, "FLV Geral")
     )
 
-    # Cruza com a variação da commodity correspondente
     df_matriz = pd.merge(
         df_matriz,
         df_ref_mkt,
@@ -372,7 +374,7 @@ with aba_matriz:
             st.success("✅ Variações de Mercado salvas!")
 
 # ---------------------------------------------------------
-# ABA 3: HISTÓRICO TEMPORAL COM KPIS DE MÊS E SEMANA
+# ABA 3: HISTÓRICO TEMPORAL
 # ---------------------------------------------------------
 with aba_historico:
     st.subheader("📈 Análise Executiva e Tendência Histórica Mensal")
@@ -380,7 +382,7 @@ with aba_historico:
     if CAMINHO_HISTORICO and os.path.exists(CAMINHO_HISTORICO):
         try:
             xls = pd.ExcelFile(CAMINHO_HISTORICO)
-            abas_disponiveis = xls.sheet_names
+            abas_disponiveis = sorted(xls.sheet_names)
 
             prod_selecionado = st.selectbox(
                 "🔍 Selecione a Categoria de Produto:",
@@ -423,7 +425,7 @@ with aba_historico:
 
             max_d = df_p[col_data].max()
 
-            # 1. Custo Médio Último Mês vs Mês Anterior
+            # Custo Médio Último Mês vs Mês Anterior
             df_ultimo_mes = df_p[df_p[col_data] >= (max_d - pd.Timedelta(days=30))]
             custo_medio_ultimo_mes = df_ultimo_mes["Preco_Limpo"].mean()
 
@@ -441,7 +443,7 @@ with aba_historico:
             else:
                 var_perc_mensal = 0.0
 
-            # 2. Fechamento Última Sexta vs Sexta Anterior
+            # Fechamento Última Sexta vs Sexta Anterior
             df_sextas = df_p[df_p[col_data].dt.weekday == 4]
             if len(df_sextas) >= 2:
                 preco_ultima_sexta = df_sextas.iloc[-1]["Preco_Limpo"]
