@@ -371,7 +371,7 @@ with aba_entrada:
             )
 
 # ---------------------------------------------------------
-# ABA 2: MATRIZ DE DECISÃO (PREÇOS DE FECHAMENTO ALINHADOS)
+# ABA 2: MATRIZ DE DECISÃO (APENAS ITENS COTADOS)
 # ---------------------------------------------------------
 with aba_matriz:
     st.subheader("📊 Matriz Comercial: Custo Atual vs Cotação vs Variação de Mercado")
@@ -402,6 +402,7 @@ with aba_matriz:
             options=["Todos os Fornecedores"] + todos_fornecedores,
         )
 
+    # Preços nominais históricos
     df_precos_ref = obter_precos_referencia_historico(CAMINHO_HISTORICO)
 
     if os.path.exists(CAMINHO_ENTRADA):
@@ -473,6 +474,9 @@ with aba_matriz:
 
     df_matriz = pd.merge(df_custo_f, df_cot_f_agrupado, on="Produto", how="left")
 
+    # FILTRO EXECUTIVO: MANTÉM APENAS OS ITENS COM COTAÇÃO REGISTRADA
+    df_matriz = df_matriz.dropna(subset=["Cotacao_Cencosud"]).copy()
+
     df_matriz["Commodity_Referencia"] = df_matriz["Produto"].map(
         lambda p: REFERENCIA_COMMODITY.get(p, p)
     )
@@ -486,57 +490,56 @@ with aba_matriz:
         suffixes=("", "_Ref"),
     )
 
-    if "Cotacao_Cencosud" not in df_matriz.columns:
-        df_matriz["Cotacao_Cencosud"] = None
+    if not df_matriz.empty:
+        # 1. Var. Cotação vs Custo Atual
+        df_matriz["Var_%_Cotacao_vs_Custo"] = (
+            (df_matriz["Cotacao_Cencosud"] - df_matriz["Custo_Atual_Sistema"])
+            / df_matriz["Custo_Atual_Sistema"]
+        ) * 100
 
-    # 1. Var. Cotação vs Custo Atual
-    df_matriz["Var_%_Cotacao_vs_Custo"] = (
-        (df_matriz["Cotacao_Cencosud"] - df_matriz["Custo_Atual_Sistema"])
-        / df_matriz["Custo_Atual_Sistema"]
-    ) * 100
+        # 2. Var. Cotação vs Fechamento Sexta-feira Anterior
+        df_matriz["Var_%_Ref_Mercado_Semanal"] = (
+            (df_matriz["Cotacao_Cencosud"] - df_matriz["Preco_Ref_Semana_Anterior"])
+            / df_matriz["Preco_Ref_Semana_Anterior"]
+        ) * 100
 
-    # 2. Var. Cotação vs Fechamento Sexta-feira Anterior
-    df_matriz["Var_%_Ref_Mercado_Semanal"] = (
-        (df_matriz["Cotacao_Cencosud"] - df_matriz["Preco_Ref_Semana_Anterior"])
-        / df_matriz["Preco_Ref_Semana_Anterior"]
-    ) * 100
+        # 3. Var. Cotação vs Custo Médio Último Mês
+        df_matriz["Var_%_Ref_Mercado_Mensal"] = (
+            (df_matriz["Cotacao_Cencosud"] - df_matriz["Preco_Ref_Mes_Anterior"])
+            / df_matriz["Preco_Ref_Mes_Anterior"]
+        ) * 100
 
-    # 3. Var. Cotação vs Custo Médio Último Mês
-    df_matriz["Var_%_Ref_Mercado_Mensal"] = (
-        (df_matriz["Cotacao_Cencosud"] - df_matriz["Preco_Ref_Mes_Anterior"])
-        / df_matriz["Preco_Ref_Mes_Anterior"]
-    ) * 100
+        df_matriz["Spread_BRL"] = (
+            df_matriz["Cotacao_Cencosud"] - df_matriz["Custo_Atual_Sistema"]
+        )
 
-    df_matriz["Spread_BRL"] = (
-        df_matriz["Cotacao_Cencosud"] - df_matriz["Custo_Atual_Sistema"]
-    )
+        def diagnostico(row):
+            if pd.isna(row["Cotacao_Cencosud"]):
+                return "⚪ Sem Cotação"
+            var_sem = row.get("Var_%_Ref_Mercado_Semanal", 0)
 
-    def diagnostico(row):
-        if pd.isna(row["Cotacao_Cencosud"]):
-            return "⚪ Sem Cotação"
-        var_sem = row.get("Var_%_Ref_Mercado_Semanal", 0)
+            if pd.isna(var_sem):
+                var_sem = 0
 
-        if pd.isna(var_sem):
-            var_sem = 0
+            if var_sem > 1.5:
+                return "🔴 ALERTA"
+            elif var_sem < 0:
+                return "🟢 EXCELENTE"
+            else:
+                return "🟡 ALINHADO"
 
-        if var_sem > 1.5:
-            return "🔴 ALERTA"
-        elif var_sem < 0:
-            return "🟢 EXCELENTE"
-        else:
-            return "🟡 ALINHADO"
-
-    df_matriz["Diagnostico_CCI"] = df_matriz.apply(diagnostico, axis=1)
+        df_matriz["Diagnostico_CCI"] = df_matriz.apply(diagnostico, axis=1)
 
     st.divider()
 
-    df_cotadas = df_matriz.dropna(subset=["Cotacao_Cencosud"])
-    total_cotados = len(df_cotadas)
-    qtd_alertas = len(
-        df_matriz[df_matriz["Diagnostico_CCI"].str.contains("🔴", na=False)]
+    total_cotados = len(df_matriz)
+    qtd_alertas = (
+        len(df_matriz[df_matriz["Diagnostico_CCI"].str.contains("🔴", na=False)])
+        if not df_matriz.empty
+        else 0
     )
     saldo_spread = (
-        df_cotadas["Spread_BRL"].sum() if not df_cotadas.empty else 0.0
+        df_matriz["Spread_BRL"].sum() if not df_matriz.empty else 0.0
     )
 
     mc1, mc2, mc3 = st.columns(3)
@@ -556,96 +559,99 @@ with aba_matriz:
 
     st.divider()
 
-    dicionario_colunas = {
-        "Bandeira": "Bandeira",
-        "Produto": "Produto",
-        "Fornecedor": "Fornecedor",
-        "Custo_Atual_Sistema": "Custo Atual",
-        "Cotacao_Cencosud": "Cotação",
-        "Spread_BRL": "Spread R$",
-        "Var_%_Cotacao_vs_Custo": "Var. Cotação",
-        "Commodity_Referencia": "Referência",
-        "Var_%_Ref_Mercado_Semanal": "Var. Ref. Sem.",
-        "Var_%_Ref_Mercado_Mensal": "Var. Ref. Mês",
-        "Diagnostico_CCI": "Alerta",
-    }
+    if not df_matriz.empty:
+        dicionario_colunas = {
+            "Bandeira": "Bandeira",
+            "Produto": "Produto",
+            "Fornecedor": "Fornecedor",
+            "Custo_Atual_Sistema": "Custo Atual",
+            "Cotacao_Cencosud": "Cotação",
+            "Spread_BRL": "Spread R$",
+            "Var_%_Cotacao_vs_Custo": "Var. Cotação",
+            "Commodity_Referencia": "Referência",
+            "Var_%_Ref_Mercado_Semanal": "Var. Ref. Sem.",
+            "Var_%_Ref_Mercado_Mensal": "Var. Ref. Mês",
+            "Diagnostico_CCI": "Alerta",
+        }
 
-    cols_ordem_exata = [
-        "Bandeira",
-        "Produto",
-        "Fornecedor",
-        "Custo_Atual_Sistema",
-        "Cotacao_Cencosud",
-        "Spread_BRL",
-        "Var_%_Cotacao_vs_Custo",
-        "Commodity_Referencia",
-        "Var_%_Ref_Mercado_Semanal",
-        "Var_%_Ref_Mercado_Mensal",
-        "Diagnostico_CCI",
-    ]
+        cols_ordem_exata = [
+            "Bandeira",
+            "Produto",
+            "Fornecedor",
+            "Custo_Atual_Sistema",
+            "Cotacao_Cencosud",
+            "Spread_BRL",
+            "Var_%_Cotacao_vs_Custo",
+            "Commodity_Referencia",
+            "Var_%_Ref_Mercado_Semanal",
+            "Var_%_Ref_Mercado_Mensal",
+            "Diagnostico_CCI",
+        ]
 
-    for c in cols_ordem_exata:
-        if c not in df_matriz.columns:
-            df_matriz[c] = None
+        for c in cols_ordem_exata:
+            if c not in df_matriz.columns:
+                df_matriz[c] = None
 
-    df_exibicao = df_matriz[cols_ordem_exata].rename(
-        columns=dicionario_colunas
-    )
-
-    st.dataframe(
-        df_exibicao.style.format({
-            "Custo Atual": "R$ {:.2f}",
-            "Cotação": "R$ {:.2f}",
-            "Spread R$": "R$ {:.2f}",
-            "Var. Cotação": "{:.2f}%",
-            "Var. Ref. Sem.": "{:.2f}%",
-            "Var. Ref. Mês": "{:.2f}%",
-        }, na_rep="-"),
-        use_container_width=True,
-        column_config={
-            "Bandeira": st.column_config.TextColumn(
-                "Bandeira", width="small"
-            ),
-            "Produto": st.column_config.TextColumn("Produto", width="medium"),
-            "Fornecedor": st.column_config.TextColumn(
-                "Fornecedor", width="small"
-            ),
-            "Custo Atual": st.column_config.NumberColumn(
-                "Custo Atual", width="small"
-            ),
-            "Cotação": st.column_config.NumberColumn("Cotação", width="small"),
-            "Spread R$": st.column_config.NumberColumn(
-                "Spread R$", width="small"
-            ),
-            "Var. Cotação": st.column_config.NumberColumn(
-                "Var. Cotação", width="small"
-            ),
-            "Referência": st.column_config.TextColumn(
-                "Referência", width="small"
-            ),
-            "Var. Ref. Sem.": st.column_config.NumberColumn(
-                "Var. Ref. Sem.", width="small"
-            ),
-            "Var. Ref. Mês": st.column_config.NumberColumn(
-                "Var. Ref. Mês", width="small"
-            ),
-            "Alerta": st.column_config.TextColumn("Alerta", width="small"),
-        },
-    )
-
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df_exibicao.to_excel(
-            writer, index=False, sheet_name="Matriz_Negociacao"
+        df_exibicao = df_matriz[cols_ordem_exata].rename(
+            columns=dicionario_colunas
         )
-    excel_data = output.getvalue()
 
-    st.download_button(
-        label="📥 Exportar Matriz de Decisão em Excel",
-        data=excel_data,
-        file_name=f"Matriz_Negociacao_Cencosud_{datetime.date.today()}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
+        st.dataframe(
+            df_exibicao.style.format({
+                "Custo Atual": "R$ {:.2f}",
+                "Cotação": "R$ {:.2f}",
+                "Spread R$": "R$ {:.2f}",
+                "Var. Cotação": "{:.2f}%",
+                "Var. Ref. Sem.": "{:.2f}%",
+                "Var. Ref. Mês": "{:.2f}%",
+            }, na_rep="-"),
+            use_container_width=True,
+            column_config={
+                "Bandeira": st.column_config.TextColumn(
+                    "Bandeira", width="small"
+                ),
+                "Produto": st.column_config.TextColumn("Produto", width="medium"),
+                "Fornecedor": st.column_config.TextColumn(
+                    "Fornecedor", width="small"
+                ),
+                "Custo Atual": st.column_config.NumberColumn(
+                    "Custo Atual", width="small"
+                ),
+                "Cotação": st.column_config.NumberColumn("Cotação", width="small"),
+                "Spread R$": st.column_config.NumberColumn(
+                    "Spread R$", width="small"
+                ),
+                "Var. Cotação": st.column_config.NumberColumn(
+                    "Var. Cotação", width="small"
+                ),
+                "Referência": st.column_config.TextColumn(
+                    "Referência", width="small"
+                ),
+                "Var. Ref. Sem.": st.column_config.NumberColumn(
+                    "Var. Ref. Sem.", width="small"
+                ),
+                "Var. Ref. Mês": st.column_config.NumberColumn(
+                    "Var. Ref. Mês", width="small"
+                ),
+                "Alerta": st.column_config.TextColumn("Alerta", width="small"),
+            },
+        )
+
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df_exibicao.to_excel(
+                writer, index=False, sheet_name="Matriz_Negociacao"
+            )
+        excel_data = output.getvalue()
+
+        st.download_button(
+            label="📥 Exportar Matriz de Decisão em Excel",
+            data=excel_data,
+            file_name=f"Matriz_Negociacao_Cencosud_{datetime.date.today()}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+    else:
+        st.info("ℹ️ Nenhum item cotado para os filtros selecionados.")
 
 # ---------------------------------------------------------
 # ABA 3: HISTÓRICO TEMPORAL
