@@ -25,7 +25,7 @@ CAMINHO_CUSTO_SISTEMA = os.path.join(
 )
 
 # ---------------------------------------------------------
-# EXTRAI VALORES DE REFERÊNCIA (SISTEMA DE PREÇOS ALINHADO COM ABA 3)
+# EXTRAI VALORES DE REFERÊNCIA HISTÓRICOS DE MERCADO
 # ---------------------------------------------------------
 @st.cache_data(ttl=3600)
 def obter_precos_referencia_historico(caminho_file):
@@ -114,7 +114,6 @@ def obter_precos_referencia_historico(caminho_file):
                     df_acumulado = df_acumulado.sort_values(by="Data_Tmp")
                     max_d = df_acumulado["Data_Tmp"].max()
 
-                    # 1. Custo Médio (Último Mês - 30 dias ativos como na Aba 3)
                     df_u30 = df_acumulado[
                         df_acumulado["Data_Tmp"] >= (max_d - pd.Timedelta(days=30))
                     ]
@@ -124,7 +123,6 @@ def obter_precos_referencia_historico(caminho_file):
                         else df_acumulado["Preco_Limpo"].mean()
                     )
 
-                    # 2. Fechamento da ÚLTIMA Sexta-feira Registrada
                     df_sextas = df_acumulado[
                         df_acumulado["Data_Tmp"].dt.weekday == 4
                     ]
@@ -168,7 +166,7 @@ def obter_precos_referencia_historico(caminho_file):
 
 
 # ---------------------------------------------------------
-# CONFIGURAÇÃO DE TELA
+# CONFIGURAÇÃO DE TELA E TÍTULO
 # ---------------------------------------------------------
 st.set_page_config(
     page_title="Ferramenta de Negociação Cencosud",
@@ -202,7 +200,7 @@ aba_entrada, aba_matriz, aba_historico = st.tabs([
     "📈 Inteligência & Histórico Temporal",
 ])
 
-# CATALOGO ORDENADO ALFABETICAMENTE
+# CATÁLOGO ORDENADO
 ESTRUTURA_PRODUTOS = {
     "Aves": sorted(["Filé de Peito", "Sobrecoxa"]),
     "Bovino": sorted(["Alcatra", "Contra Filé", "Coxão Mole", "Dianteiro"]),
@@ -290,11 +288,12 @@ with aba_entrada:
         c_form1, c_form2 = st.columns(2)
         with c_form1:
             custo_pago = st.number_input(
-                "Cotação (R$):",
+                "Cotação (R$/kg):",
                 min_value=0.0,
-                value=15.00,
-                step=0.10,
+                value=5.00,
+                step=0.05,
                 format="%.2f",
+                help="Informe o valor cotado em R$/kg para padrão universal.",
             )
         with c_form2:
             data_negocio = st.date_input(
@@ -305,9 +304,9 @@ with aba_entrada:
             produto_sel, produto_sel
         )
         st.info(
-            f"💡 **Índice de Referência:** O item **{produto_sel}** será"
-            f" comparado com a referência **{commodity_ref}** na Matriz de"
-            " Decisão."
+            f"💡 **Padrão de Entrada:** Cotação calculada em **R$/kg**. O item"
+            f" **{produto_sel}** será comparado com a referência"
+            f" **{commodity_ref}** na Matriz."
         )
 
         btn_salvar = st.form_submit_button(
@@ -336,8 +335,8 @@ with aba_entrada:
 
         df_atualizado.to_excel(CAMINHO_ENTRADA, index=False)
         st.success(
-            f"✅ Cotação de **{produto_sel}** ({fornecedor_sel}) registrada com"
-            " sucesso!"
+            f"✅ Cotação de **{produto_sel}** ({fornecedor_sel}) em R$/kg"
+            " registrada com sucesso!"
         )
 
     st.divider()
@@ -365,29 +364,61 @@ with aba_entrada:
         ):
             st.dataframe(
                 df_historico_cotacoes[cols_existentes].style.format({
-                    "Cotacao_Cencosud": "R$ {:.2f}"
+                    "Cotacao_Cencosud": "R$ {:.2f}/kg"
                 }, na_rep="-"),
                 use_container_width=True,
             )
 
 # ---------------------------------------------------------
-# ABA 2: MATRIZ DE DECISÃO (APENAS ITENS COTADOS)
+# ABA 2: MATRIZ DE DECISÃO
 # ---------------------------------------------------------
 with aba_matriz:
     st.subheader("📊 Matriz Comercial: Custo Atual vs Cotação vs Variação de Mercado")
 
-    f1, f2, f3 = st.columns(3)
+    df_precos_ref = obter_precos_referencia_historico(CAMINHO_HISTORICO)
+
+    if os.path.exists(CAMINHO_ENTRADA):
+        df_cotacoes = pd.read_excel(CAMINHO_ENTRADA)
+        if (
+            "Custo_Pago_Cencosud" in df_cotacoes.columns
+            and "Cotacao_Cencosud" not in df_cotacoes.columns
+        ):
+            df_cotacoes["Cotacao_Cencosud"] = df_cotacoes["Custo_Pago_Cencosud"]
+    else:
+        df_cotacoes = pd.DataFrame(
+            columns=[
+                "Data_Compra",
+                "Bandeira",
+                "Categoria",
+                "Produto",
+                "Cotacao_Cencosud",
+                "Fornecedor",
+            ]
+        )
+
+    datas_disponiveis = (
+        sorted(df_cotacoes["Data_Compra"].astype(str).unique(), reverse=True)
+        if not df_cotacoes.empty and "Data_Compra" in df_cotacoes.columns
+        else []
+    )
+
+    f1, f2, f3, f4 = st.columns(4)
     with f1:
+        opcao_rodada = st.selectbox(
+            "📅 Rodada / Data Cotação:",
+            options=["Última Rodada Registrada"] + datas_disponiveis,
+        )
+    with f2:
         bandeira_filtro = st.selectbox(
             "🔍 Bandeira Cencosud:",
             options=["Todas as Bandeiras"] + BANDEIRAS_CENCOSUD,
         )
-    with f2:
+    with f3:
         categoria_filtro = st.selectbox(
             "🔍 Categoria:",
             options=["Todas as Categorias"] + sorted(list(ESTRUTURA_PRODUTOS.keys())),
         )
-    with f3:
+    with f4:
         todos_fornecedores = sorted(
             list(
                 set([
@@ -402,26 +433,18 @@ with aba_matriz:
             options=["Todos os Fornecedores"] + todos_fornecedores,
         )
 
-    # Preços nominais históricos
-    df_precos_ref = obter_precos_referencia_historico(CAMINHO_HISTORICO)
-
-    if os.path.exists(CAMINHO_ENTRADA):
-        df_cotacoes = pd.read_excel(CAMINHO_ENTRADA)
-        if (
-            "Custo_Pago_Cencosud" in df_cotacoes.columns
-            and "Cotacao_Cencosud" not in df_cotacoes.columns
-        ):
-            df_cotacoes["Cotacao_Cencosud"] = df_cotacoes["Custo_Pago_Cencosud"]
+    if not df_cotacoes.empty and "Data_Compra" in df_cotacoes.columns:
+        if opcao_rodada == "Última Rodada Registrada":
+            ultima_dt = df_cotacoes["Data_Compra"].astype(str).max()
+            df_cotacoes_f = df_cotacoes[
+                df_cotacoes["Data_Compra"].astype(str) == ultima_dt
+            ].copy()
+        else:
+            df_cotacoes_f = df_cotacoes[
+                df_cotacoes["Data_Compra"].astype(str) == opcao_rodada
+            ].copy()
     else:
-        df_cotacoes = pd.DataFrame(
-            columns=[
-                "Bandeira",
-                "Categoria",
-                "Produto",
-                "Cotacao_Cencosud",
-                "Fornecedor",
-            ]
-        )
+        df_cotacoes_f = df_cotacoes.copy()
 
     todos_itens = sorted([
         item for sublista in ESTRUTURA_PRODUTOS.values() for item in sublista
@@ -443,7 +466,9 @@ with aba_matriz:
         df_custo_f = df_custo_sis[
             df_custo_sis["Bandeira"] == bandeira_filtro
         ].copy()
-        df_cot_f = df_cotacoes[df_cotacoes["Bandeira"] == bandeira_filtro].copy()
+        df_cot_f = df_cotacoes_f[
+            df_cotacoes_f["Bandeira"] == bandeira_filtro
+        ].copy()
     else:
         df_custo_f = (
             df_custo_sis.groupby("Produto", as_index=False)[
@@ -451,7 +476,7 @@ with aba_matriz:
             ].mean()
         )
         df_custo_f["Bandeira"] = "Todas"
-        df_cot_f = df_cotacoes.copy()
+        df_cot_f = df_cotacoes_f.copy()
 
     if categoria_filtro != "Todas as Categorias":
         itens_cat = ESTRUTURA_PRODUTOS[categoria_filtro]
@@ -473,8 +498,6 @@ with aba_matriz:
         )
 
     df_matriz = pd.merge(df_custo_f, df_cot_f_agrupado, on="Produto", how="left")
-
-    # FILTRO EXECUTIVO: MANTÉM APENAS OS ITENS COM COTAÇÃO REGISTRADA
     df_matriz = df_matriz.dropna(subset=["Cotacao_Cencosud"]).copy()
 
     df_matriz["Commodity_Referencia"] = df_matriz["Produto"].map(
@@ -491,19 +514,16 @@ with aba_matriz:
     )
 
     if not df_matriz.empty:
-        # 1. Var. Cotação vs Custo Atual
         df_matriz["Var_%_Cotacao_vs_Custo"] = (
             (df_matriz["Cotacao_Cencosud"] - df_matriz["Custo_Atual_Sistema"])
             / df_matriz["Custo_Atual_Sistema"]
         ) * 100
 
-        # 2. Var. Cotação vs Fechamento Sexta-feira Anterior
         df_matriz["Var_%_Ref_Mercado_Semanal"] = (
             (df_matriz["Cotacao_Cencosud"] - df_matriz["Preco_Ref_Semana_Anterior"])
             / df_matriz["Preco_Ref_Semana_Anterior"]
         ) * 100
 
-        # 3. Var. Cotação vs Custo Médio Último Mês
         df_matriz["Var_%_Ref_Mercado_Mensal"] = (
             (df_matriz["Cotacao_Cencosud"] - df_matriz["Preco_Ref_Mes_Anterior"])
             / df_matriz["Preco_Ref_Mes_Anterior"]
@@ -565,7 +585,7 @@ with aba_matriz:
             "Produto": "Produto",
             "Fornecedor": "Fornecedor",
             "Custo_Atual_Sistema": "Custo Atual",
-            "Cotacao_Cencosud": "Cotação",
+            "Cotacao_Cencosud": "Cotação (R$/kg)",
             "Spread_BRL": "Spread R$",
             "Var_%_Cotacao_vs_Custo": "Var. Cotação",
             "Commodity_Referencia": "Referência",
@@ -596,15 +616,24 @@ with aba_matriz:
             columns=dicionario_colunas
         )
 
+        def highlight_alertas(s):
+            if "🔴" in str(s["Alerta"]):
+                return ["background-color: #fce8e6"] * len(s)
+            elif "🟢" in str(s["Alerta"]):
+                return ["background-color: #e6f4ea"] * len(s)
+            return [""] * len(s)
+
+        df_styled = df_exibicao.style.apply(highlight_alertas, axis=1).format({
+            "Custo Atual": "R$ {:.2f}",
+            "Cotação (R$/kg)": "R$ {:.2f}",
+            "Spread R$": "R$ {:.2f}",
+            "Var. Cotação": "{:.2f}%",
+            "Var. Ref. Sem.": "{:.2f}%",
+            "Var. Ref. Mês": "{:.2f}%",
+        }, na_rep="-")
+
         st.dataframe(
-            df_exibicao.style.format({
-                "Custo Atual": "R$ {:.2f}",
-                "Cotação": "R$ {:.2f}",
-                "Spread R$": "R$ {:.2f}",
-                "Var. Cotação": "{:.2f}%",
-                "Var. Ref. Sem.": "{:.2f}%",
-                "Var. Ref. Mês": "{:.2f}%",
-            }, na_rep="-"),
+            df_styled,
             use_container_width=True,
             column_config={
                 "Bandeira": st.column_config.TextColumn(
@@ -617,7 +646,9 @@ with aba_matriz:
                 "Custo Atual": st.column_config.NumberColumn(
                     "Custo Atual", width="small"
                 ),
-                "Cotação": st.column_config.NumberColumn("Cotação", width="small"),
+                "Cotação (R$/kg)": st.column_config.NumberColumn(
+                    "Cotação (R$/kg)", width="small"
+                ),
                 "Spread R$": st.column_config.NumberColumn(
                     "Spread R$", width="small"
                 ),
@@ -651,10 +682,10 @@ with aba_matriz:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
     else:
-        st.info("ℹ️ Nenhum item cotado para os filtros selecionados.")
+        st.info("ℹ️ Nenhum item cotado para a rodada e filtros selecionados.")
 
 # ---------------------------------------------------------
-# ABA 3: HISTÓRICO TEMPORAL
+# ABA 3: HISTÓRICO TEMPORAL (MERCADO VS CUSTO SISTEMA CENCOSUD)
 # ---------------------------------------------------------
 with aba_historico:
     st.subheader("📈 Análise Executiva e Tendência Histórica Mensal")
@@ -737,7 +768,7 @@ with aba_historico:
                 col_data = "Data_Tmp"
                 st.info(
                     f"ℹ️ Exibindo cotação de **{prod_selecionado}** (Base"
-                    " Hortifruti/FLV)."
+                    " Hortifruti/FLV em R$/kg)."
                 )
             else:
                 df_p = pd.read_excel(
@@ -775,7 +806,7 @@ with aba_historico:
                     col_preco = "À vista R$"
                     st.info(
                         f"ℹ️ Exibindo cotação de **{prod_selecionado} em Reais"
-                        " (R$)**."
+                        " (R$/kg)**."
                     )
 
             df_p["Preco_Limpo"] = pd.to_numeric(
@@ -832,37 +863,88 @@ with aba_historico:
 
             k1, k2 = st.columns(2)
             k1.metric(
-                label="Custo Médio (Último Mês)",
-                value=f"R$ {custo_medio_ultimo_mes:,.2f}",
+                label="Custo Médio Mercado (Último Mês)",
+                value=f"R$ {custo_medio_ultimo_mes:,.2f}/kg",
                 delta=f"{var_perc_mensal:+.2f}% vs mês anterior",
             )
             k2.metric(
                 label=f"Fechamento Sexta-feira ({dt_sexta})",
-                value=f"R$ {preco_ultima_sexta:,.2f}",
+                value=f"R$ {preco_ultima_sexta:,.2f}/kg",
                 delta=f"{var_perc_semanal:+.2f}% vs semana anterior",
             )
 
             st.divider()
-            st.subheader(f"📉 Curva de Tendência Mensal - {prod_selecionado}")
+            st.subheader(
+                f"📉 Curva Comparativa: Mercado vs Custo Sistema Cencosud -"
+                f" {prod_selecionado}"
+            )
 
+            # Curva 1: Mercado Oficial
             df_5y = df_p[
                 df_p[col_data] >= (max_d - pd.DateOffset(years=5))
             ].copy()
-
             df_5y["Periodo"] = df_5y[col_data].dt.to_period("M")
-            df_chart_mes = (
+            df_mkt_mes = (
                 df_5y.groupby("Periodo")["Preco_Limpo"].mean().reset_index()
             )
-            df_chart_mes["Data_Mensal"] = df_chart_mes[
-                "Periodo"
-            ].dt.to_timestamp()
+            df_mkt_mes["Data_Mensal"] = df_mkt_mes["Periodo"].dt.to_timestamp()
+            df_mkt_mes = df_mkt_mes.set_index("Data_Mensal")[["Preco_Limpo"]]
+            df_mkt_mes.columns = ["Mercado Oficial (R$/kg)"]
 
-            df_final_chart = df_chart_mes.set_index("Data_Mensal")[
-                ["Preco_Limpo"]
-            ]
-            df_final_chart.columns = ["Preço Médio (R$)"]
+            # Curva 2: Histórico de Custo Atual do Sistema
+            if os.path.exists(CAMINHO_CUSTO_SISTEMA):
+                df_sis = pd.read_excel(CAMINHO_CUSTO_SISTEMA)
+                if (
+                    not df_sis.empty
+                    and "Produto" in df_sis.columns
+                    and "Custo_Atual_Sistema" in df_sis.columns
+                ):
+                    df_sis_prod = df_sis[
+                        df_sis["Produto"] == prod_selecionado
+                    ].copy()
+                    if not df_sis_prod.empty:
+                        col_dt_sis = next(
+                            (c for c in df_sis_prod.columns if "data" in c.lower()),
+                            None,
+                        )
+                        if col_dt_sis:
+                            df_sis_prod["Data_Dt"] = pd.to_datetime(
+                                df_sis_prod[col_dt_sis], errors="coerce"
+                            )
+                        else:
+                            df_sis_prod["Data_Dt"] = pd.to_datetime(
+                                datetime.date.today()
+                            )
 
-            st.line_chart(df_final_chart, use_container_width=True)
+                        df_sis_prod["Periodo"] = df_sis_prod[
+                            "Data_Dt"
+                        ].dt.to_period("M")
+                        df_cenc_mes = (
+                            df_sis_prod.groupby("Periodo")[
+                                "Custo_Atual_Sistema"
+                            ]
+                            .mean()
+                            .reset_index()
+                        )
+                        df_cenc_mes["Data_Mensal"] = df_cenc_mes[
+                            "Periodo"
+                        ].dt.to_timestamp()
+                        df_cenc_mes = df_cenc_mes.set_index("Data_Mensal")[
+                            ["Custo_Atual_Sistema"]
+                        ]
+                        df_cenc_mes.columns = ["Cencosud - Custo Sistema (R$/kg)"]
+
+                        df_chart_duplo = df_mkt_mes.join(
+                            df_cenc_mes, how="left"
+                        )
+                    else:
+                        df_chart_duplo = df_mkt_mes
+                else:
+                    df_chart_duplo = df_mkt_mes
+            else:
+                df_chart_duplo = df_mkt_mes
+
+            st.line_chart(df_chart_duplo, use_container_width=True)
 
             with st.expander("📋 Ver Dados Brutos em Tabela"):
                 st.dataframe(
