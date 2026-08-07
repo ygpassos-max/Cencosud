@@ -115,7 +115,7 @@ with aba_entrada:
         st.dataframe(pd.read_excel(CAMINHO_ENTRADA), use_container_width=True)
 
 # ---------------------------------------------------------
-# ABA 2: MATRIZ DE DECISÃO COM FILTRO DE BANDEIRA E SPREADS
+# ABA 2: MATRIZ DE DECISÃO
 # ---------------------------------------------------------
 with aba_matriz:
     st.subheader("📊 Matriz Comercial: Custo Atual vs Cotação vs Variação de Mercado")
@@ -127,7 +127,6 @@ with aba_matriz:
             options=["Todas as Bandeiras"] + BANDEIRAS_CENCOSUD,
         )
 
-    # 1. Tabela de Variações de Mercado
     if os.path.exists(CAMINHO_REFERENCIA_MERCADO):
         df_ref_mkt = pd.read_excel(CAMINHO_REFERENCIA_MERCADO)
     else:
@@ -137,7 +136,6 @@ with aba_matriz:
             "Var_%_Ref_Mercado_Mensal": [3.20, -1.50, 4.00, 1.20],
         })
 
-    # 2. Carrega Cotações (com compatibilidade para nomes de colunas antigos e novos)
     if os.path.exists(CAMINHO_ENTRADA):
         df_cotacoes = pd.read_excel(CAMINHO_ENTRADA)
         if "Custo_Pago_Cencosud" in df_cotacoes.columns and "Cotacao_Cencosud" not in df_cotacoes.columns:
@@ -145,7 +143,6 @@ with aba_matriz:
     else:
         df_cotacoes = pd.DataFrame(columns=["Bandeira", "Produto", "Cotacao_Cencosud"])
 
-    # 3. Carrega Custos em Sistema
     df_custo_sis = (
         pd.read_excel(CAMINHO_CUSTO_SISTEMA)
         if os.path.exists(CAMINHO_CUSTO_SISTEMA)
@@ -162,7 +159,6 @@ with aba_matriz:
         })
     )
 
-    # Aplicação do Filtro de Bandeira
     if bandeira_filtro != "Todas as Bandeiras":
         df_custo_f = df_custo_sis[df_custo_sis["Bandeira"] == bandeira_filtro]
         df_cot_f = df_cotacoes[df_cotacoes["Bandeira"] == bandeira_filtro]
@@ -173,15 +169,12 @@ with aba_matriz:
         else:
             df_cot_f = pd.DataFrame(columns=["Produto", "Cotacao_Cencosud"])
 
-    # Cruzamento dos Dados
     df_matriz = pd.merge(df_custo_f, df_cot_f, on="Produto", how="left")
     df_matriz = pd.merge(df_matriz, df_ref_mkt, on="Produto", how="left")
 
-    # Garante existência da coluna mesmo se vazia
     if "Cotacao_Cencosud" not in df_matriz.columns:
         df_matriz["Cotacao_Cencosud"] = None
 
-    # Cálculos
     df_matriz["Var_%_Cotacao_vs_Custo"] = (
         (df_matriz["Cotacao_Cencosud"] - df_matriz["Custo_Atual_Sistema"])
         / df_matriz["Custo_Atual_Sistema"]
@@ -250,7 +243,7 @@ with aba_matriz:
             st.success("✅ Variações de Mercado salvas!")
 
 # ---------------------------------------------------------
-# ABA 3: HISTÓRICO TEMPORAL
+# ABA 3: HISTÓRICO TEMPORAL COM VARIAÇÕES MENSAL E SEMANAL
 # ---------------------------------------------------------
 with aba_historico:
     st.subheader("📈 Análise Executiva e Tendência Histórica Mensal")
@@ -290,7 +283,7 @@ with aba_historico:
                 st.info("ℹ️ Exibindo cotação do **Boi Gordo em Reais (R$)**.")
             else:
                 col_preco = "À vista R$"
-                st.info("ℹ️ Exibindo cotação de **Frango Congelado (R$)**.")
+                st.info(f"ℹ️ Exibindo cotação de **{prod_selecionado} em Reais (R$)**.")
 
             df_p["Preco_Limpo"] = pd.to_numeric(
                 df_p[col_preco], errors="coerce"
@@ -299,31 +292,64 @@ with aba_historico:
                 by=col_data
             )
 
+            # ---------------------------------------------------------
+            # CÁLCULOS DOS KPIS COM VARIAÇÃO % (MENSAL E SEMANAL)
+            # ---------------------------------------------------------
             max_d = df_p[col_data].max()
-            df_30d = df_p[df_p[col_data] >= (max_d - pd.Timedelta(days=30))]
-            custo_medio_30d = df_30d["Preco_Limpo"].mean()
 
-            df_sextas = df_p[df_p[col_data].dt.weekday == 4]
-            if not df_sextas.empty:
-                preco_sexta = df_sextas.iloc[-1]["Preco_Limpo"]
-                dt_sexta = df_sextas.iloc[-1][col_data].strftime("%d/%m/%Y")
+            # 1. Custo Médio Último Mês vs Mês Anterior
+            df_ultimo_mes = df_p[df_p[col_data] >= (max_d - pd.Timedelta(days=30))]
+            custo_medio_ultimo_mes = df_ultimo_mes["Preco_Limpo"].mean()
+
+            df_mes_anterior = df_p[
+                (df_p[col_data] < (max_d - pd.Timedelta(days=30)))
+                & (df_p[col_data] >= (max_d - pd.Timedelta(days=60)))
+            ]
+            custo_medio_mes_anterior = df_mes_anterior["Preco_Limpo"].mean()
+
+            if pd.notnull(custo_medio_mes_anterior) and custo_medio_mes_anterior > 0:
+                var_perc_mensal = (
+                    (custo_medio_ultimo_mes - custo_medio_mes_anterior)
+                    / custo_medio_mes_anterior
+                ) * 100
             else:
-                preco_sexta = df_p.iloc[-1]["Preco_Limpo"]
+                var_perc_mensal = 0.0
+
+            # 2. Fechamento Última Sexta vs Sexta Anterior
+            df_sextas = df_p[df_p[col_data].dt.weekday == 4]
+            if len(df_sextas) >= 2:
+                preco_ultima_sexta = df_sextas.iloc[-1]["Preco_Limpo"]
+                dt_sexta = df_sextas.iloc[-1][col_data].strftime("%d/%m/%Y")
+                preco_sexta_anterior = df_sextas.iloc[-2]["Preco_Limpo"]
+
+                var_perc_semanal = (
+                    (preco_ultima_sexta - preco_sexta_anterior)
+                    / preco_sexta_anterior
+                ) * 100
+            elif not df_sextas.empty:
+                preco_ultima_sexta = df_sextas.iloc[-1]["Preco_Limpo"]
+                dt_sexta = df_sextas.iloc[-1][col_data].strftime("%d/%m/%Y")
+                var_perc_semanal = 0.0
+            else:
+                preco_ultima_sexta = df_p.iloc[-1]["Preco_Limpo"]
                 dt_sexta = df_p.iloc[-1][col_data].strftime("%d/%m/%Y")
+                var_perc_semanal = 0.0
 
             st.divider()
-            k1, k2, k3 = st.columns(3)
+
+            # EXIBIÇÃO EM 2 CARDS EXECUTIVOS COM DELTAS
+            k1, k2 = st.columns(2)
+            
             k1.metric(
                 label="Custo Médio (Último Mês)",
-                value=f"R$ {custo_medio_30d:,.2f}",
+                value=f"R$ {custo_medio_ultimo_mes:,.2f}",
+                delta=f"{var_perc_mensal:+.2f}% vs mês anterior",
             )
+            
             k2.metric(
                 label=f"Fechamento Sexta-feira ({dt_sexta})",
-                value=f"R$ {preco_sexta:,.2f}",
-            )
-            k3.metric(
-                label="Total de Cotações Registradas",
-                value=f"{len(df_p)} registros",
+                value=f"R$ {preco_ultima_sexta:,.2f}",
+                delta=f"{var_perc_semanal:+.2f}% vs semana anterior",
             )
 
             st.divider()
