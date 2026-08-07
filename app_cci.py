@@ -234,12 +234,11 @@ with aba_entrada:
             )
 
 # ---------------------------------------------------------
-# ABA 2: MATRIZ DE DECISÃO COM FILTROS & EXPORTAÇÃO EXCEL
+# ABA 2: MATRIZ DE DECISÃO COM COLUNAS RENOMEADAS
 # ---------------------------------------------------------
 with aba_matriz:
     st.subheader("📊 Matriz Comercial: Custo Atual vs Cotação vs Variação de Mercado")
 
-    # FILTROS
     f1, f2, f3 = st.columns(3)
     with f1:
         bandeira_filtro = st.selectbox(
@@ -252,7 +251,6 @@ with aba_matriz:
             options=["Todas as Categorias"] + sorted(list(ESTRUTURA_PRODUTOS.keys())),
         )
     with f3:
-        # Pega a lista completa de fornecedores cadastrados
         todos_fornecedores = sorted(list(set([
             forn for sub in FORNECEDORES_POR_CATEGORIA.values() for forn in sub
         ])))
@@ -303,7 +301,7 @@ with aba_matriz:
         })
     )
 
-    # Aplicação de Filtros Encadeados
+    # Aplicação de Filtros
     if bandeira_filtro != "Todas as Bandeiras":
         df_custo_f = df_custo_sis[df_custo_sis["Bandeira"] == bandeira_filtro]
         df_cot_f = df_cotacoes[df_cotacoes["Bandeira"] == bandeira_filtro]
@@ -322,7 +320,6 @@ with aba_matriz:
     if fornecedor_filtro != "Todos os Fornecedores":
         df_cot_f = df_cot_f[df_cot_f["Fornecedor"] == fornecedor_filtro]
 
-    # Consolida cotações por produto/fornecedor
     if not df_cot_f.empty and "Cotacao_Cencosud" in df_cot_f.columns:
         df_cot_f_agrupado = (
             df_cot_f.groupby(["Produto", "Fornecedor"], as_index=False)[
@@ -406,8 +403,19 @@ with aba_matriz:
 
     st.divider()
 
-    # EXIBIÇÃO DA MATRIZ
-    cols_exibir = [
+    # MAPEAMENTO E RENOMEAÇÃO EXECUTIVA DAS COLUNAS
+    dicionario_colunas = {
+        "Custo_Atual_Sistema": "Custo Atual",
+        "Cotacao_Cencosud": "Cotação",
+        "Spread_BRL": "Spread R$",
+        "Var_%_Cotacao_vs_Custo": "Var. Cotação Vs. Custo",
+        "Commodity_Referencia": "Referencia",
+        "Var_%_Ref_Mercado_Semanal": "Var. Ref. Sem. Ant.",
+        "Var_%_Ref_Mercado_Mensal": "Var. Ref. Mes Ant.",
+        "Diagnostico_CCI": "Alerta",
+    }
+
+    cols_ordem = [
         "Produto",
         "Fornecedor",
         "Custo_Atual_Sistema",
@@ -421,18 +429,21 @@ with aba_matriz:
     ]
 
     if "Bandeira" in df_matriz.columns:
-        cols_exibir.insert(0, "Bandeira")
+        cols_ordem.insert(0, "Bandeira")
 
-    cols_existentes = [c for c in cols_exibir if c in df_matriz.columns]
+    cols_existentes = [c for c in cols_ordem if c in df_matriz.columns]
+    
+    # Gera DataFrame final com nomes limpos
+    df_exibicao = df_matriz[cols_existentes].rename(columns=dicionario_colunas)
 
     st.dataframe(
-        df_matriz[cols_existentes].style.format({
-            "Custo_Atual_Sistema": "R$ {:.2f}",
-            "Cotacao_Cencosud": "R$ {:.2f}",
-            "Spread_BRL": "R$ {:.2f}",
-            "Var_%_Cotacao_vs_Custo": "{:.2f}%",
-            "Var_%_Ref_Mercado_Semanal": "{:.2f}%",
-            "Var_%_Ref_Mercado_Mensal": "{:.2f}%",
+        df_exibicao.style.format({
+            "Custo Atual": "R$ {:.2f}",
+            "Cotação": "R$ {:.2f}",
+            "Spread R$": "R$ {:.2f}",
+            "Var. Cotação Vs. Custo": "{:.2f}%",
+            "Var. Ref. Sem. Ant.": "{:.2f}%",
+            "Var. Ref. Mes Ant.": "{:.2f}%",
         }, na_rep="-"),
         use_container_width=True,
     )
@@ -440,7 +451,7 @@ with aba_matriz:
     # BOTÃO DE EXPORTAÇÃO EXCEL
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df_matriz[cols_existentes].to_excel(
+        df_exibicao.to_excel(
             writer, index=False, sheet_name="Matriz_Negociacao"
         )
     excel_data = output.getvalue()
