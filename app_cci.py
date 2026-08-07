@@ -127,184 +127,200 @@ with aba_analise:
         st.success("✅ Tabela atualizada!")
 
 # ---------------------------------------------------------
-# ABA 3: HISTÓRICO COM SELETOR & TENDÊNCIA DOS ÚLTIMOS 5 ANOS
+# ABA 3: HISTÓRICO FLEXÍVEL (SISTEMA ANTI-ERRO DE LEITURA)
 # ---------------------------------------------------------
 with aba_historico:
     st.subheader("📈 Análise Executiva e Tendência Histórica")
 
     if CAMINHO_HISTORICO and os.path.exists(CAMINHO_HISTORICO):
         try:
-            df_raw = pd.read_excel(CAMINHO_HISTORICO)
-            df_raw.columns = [str(c).strip() for c in df_raw.columns]
+            # Tenta ler ignorando possíveis linhas em branco no topo do Excel
+            df_raw = None
+            for skip in range(5):
+                try:
+                    df_temp = pd.read_excel(CAMINHO_HISTORICO, skiprows=skip)
+                    df_temp.columns = [
+                        str(c).strip() for c in df_temp.columns
+                    ]
+                    # Procura se encontrou colunas válidas
+                    if len(df_temp.columns) > 1 and not df_temp.empty:
+                        df_raw = df_temp
+                        break
+                except Exception:
+                    continue
 
-            # Identifica Coluna de Data
-            col_data = next(
-                (
-                    c
-                    for c in df_raw.columns
-                    if "data" in c.lower() or "date" in c.lower()
-                ),
-                df_raw.columns[0],
-            )
-            df_raw[col_data] = pd.to_datetime(df_raw[col_data], errors="coerce")
-            df_raw = df_raw.dropna(subset=[col_data]).sort_values(by=col_data)
-
-            # Identifica se o arquivo tem estrutura em Linhas (Coluna Produto) ou Colunas por Produto
-            col_prod = next(
-                (
-                    c
-                    for c in df_raw.columns
-                    if "prod" in c.lower() or "item" in c.lower()
-                ),
-                None,
-            )
-
-            # 1. TRATAMENTO CASO O ARQUIVO TENHA UMA COLUNA 'PRODUTO'
-            if col_prod:
-                lista_produtos = [
-                    str(p).strip() for p in df_raw[col_prod].dropna().unique()
-                ]
-                prod_sel_h = st.selectbox(
-                    "🔍 Selecione o Produto:", options=lista_produtos
+            if df_raw is None or df_raw.empty:
+                st.error(
+                    "❌ Não foi possível identificar as colunas do arquivo de"
+                    " histórico."
                 )
-                df_p = df_raw[df_raw[col_prod] == prod_sel_h].copy()
+            else:
+                # 1. Busca Coluna de Data
+                col_data = None
+                for col in df_raw.columns:
+                    if (
+                        "data" in col.lower()
+                        or "date" in col.lower()
+                        if col
+                        else False
+                    ):
+                        col_data = col
+                        break
 
-                col_valor = next(
-                    (
+                if not col_data:
+                    col_data = df_raw.columns[0]
+
+                df_raw[col_data] = pd.to_datetime(
+                    df_raw[col_data], errors="coerce"
+                )
+                df_raw = df_raw.dropna(subset=[col_data]).sort_values(
+                    by=col_data
+                )
+
+                # 2. Busca Coluna de Produto ou Mapeia Colunas Indiviuais
+                col_prod = None
+                for col in df_raw.columns:
+                    if "prod" in col.lower() or "item" in col.lower():
+                        col_prod = col
+                        break
+
+                # Caso exista uma coluna "Produto"
+                if col_prod:
+                    produtos_lista = [
+                        str(p).strip()
+                        for p in df_raw[col_prod].dropna().unique()
+                    ]
+                    prod_sel = st.selectbox(
+                        "🔍 Selecione o Produto:", options=produtos_lista
+                    )
+                    df_p = df_raw[df_raw[col_prod] == prod_sel].copy()
+
+                    col_val = next(
+                        (
+                            c
+                            for c in df_p.columns
+                            if "preco" in c.lower()
+                            or "custo" in c.lower()
+                            or "valor" in c.lower()
+                            or "brl" in c.lower()
+                        ),
+                        df_p.select_dtypes(include=["number"]).columns[0],
+                    )
+
+                    df_p["Preco_Limpo"] = pd.to_numeric(
+                        df_p[col_val], errors="coerce"
+                    )
+
+                # Caso cada coluna seja um produto diferente
+                else:
+                    cols_opcoes = [
                         c
-                        for c in df_p.columns
-                        if "preco" in c.lower()
-                        or "custo" in c.lower()
-                        or "valor" in c.lower()
-                        or "brl" in c.lower()
+                        for c in df_raw.columns
+                        if c != col_data and "unnamed" not in c.lower()
+                    ]
+                    prod_sel = st.selectbox(
+                        "🔍 Selecione o Produto:", options=cols_opcoes
+                    )
+
+                    df_p = pd.DataFrame({
+                        col_data: df_raw[col_data],
+                        "Preco_Limpo": pd.to_numeric(
+                            df_raw[prod_sel]
+                            .astype(str)
+                            .str.replace("R$", "", regex=False)
+                            .str.replace(".", "", regex=False)
+                            .str.replace(",", ".", regex=False)
+                            .str.strip(),
+                            errors="coerce",
+                        ),
+                    })
+
+                df_p = df_p.dropna(subset=["Preco_Limpo", col_data])
+
+                # REGRA DE REGIONALIZAÇÃO/MOEDA
+                p_lower = str(prod_sel).lower()
+                if "frango" in p_lower or "boi" in p_lower:
+                    st.info(
+                        f"ℹ️ Exibindo cotação oficial em **Reais (R$)** para"
+                        f" **{prod_sel}**."
+                    )
+                elif "ovo" in p_lower:
+                    st.info(
+                        "ℹ️ Exibindo cotação **CIF Região Grande SP** para"
+                        " Ovos."
+                    )
+                elif "suino" in p_lower:
+                    st.info("ℹ️ Exibindo cotação para **Suíno Vivo (SP)**.")
+
+                # CARDS DE KPIS
+                # 1. Custo Médio do Último Mês
+                max_d = df_p[col_data].max()
+                df_30d = df_p[df_p[col_data] >= (max_d - pd.Timedelta(days=30))]
+                custo_medio_30d = df_30d["Preco_Limpo"].mean()
+
+                # 2. Fechamento de Sexta-Feira
+                df_sextas = df_p[df_p[col_data].dt.weekday == 4]
+                if not df_sextas.empty:
+                    preco_sexta = df_sextas.iloc[-1]["Preco_Limpo"]
+                    dt_sexta = df_sextas.iloc[-1][col_data].strftime("%d/%m/%Y")
+                else:
+                    preco_sexta = df_p.iloc[-1]["Preco_Limpo"]
+                    dt_sexta = df_p.iloc[-1][col_data].strftime("%d/%m/%Y")
+
+                st.divider()
+                k1, k2, k3 = st.columns(3)
+                k1.metric(
+                    label="Custo Médio (Último Mês)",
+                    value=(
+                        f"R$ {custo_medio_30d:,.2f}"
+                        if pd.notnull(custo_medio_30d)
+                        else "N/A"
                     ),
-                    df_p.select_dtypes(include=["number"]).columns[0],
                 )
-                df_p["Preco_Limpo"] = pd.to_numeric(
-                    df_p[col_valor], errors="coerce"
-                )
-
-            # 2. TRATAMENTO CASO CADA PRODUTO SEJA UMA COLUNA SEPARADA
-            else:
-                cols_numericas = df_raw.select_dtypes(
-                    include=["number", "object"]
-                ).columns
-                cols_filtradas = [
-                    c
-                    for c in cols_numericas
-                    if c != col_data and "unnamed" not in c.lower()
-                ]
-                prod_sel_h = st.selectbox(
-                    "🔍 Selecione o Produto:", options=cols_filtradas
-                )
-
-                df_p = pd.DataFrame({
-                    col_data: df_raw[col_data],
-                    "Preco_Limpo": pd.to_numeric(
-                        df_raw[prod_sel_h]
-                        .astype(str)
-                        .str.replace("R$", "", regex=False)
-                        .str.replace(".", "", regex=False)
-                        .str.replace(",", ".", regex=False)
-                        .str.strip(),
-                        errors="coerce",
+                k2.metric(
+                    label=f"Fechamento Sexta-feira ({dt_sexta})",
+                    value=(
+                        f"R$ {preco_sexta:,.2f}"
+                        if pd.notnull(preco_sexta)
+                        else "N/A"
                     ),
-                })
-
-            df_p = df_p.dropna(subset=["Preco_Limpo", col_data])
-
-            # Filtro dos Últimos 5 Anos de Histórico
-            data_limite_5anos = df_p[col_data].max() - pd.DateOffset(years=5)
-            df_5anos = df_p[df_p[col_data] >= data_limite_5anos].copy()
-
-            # REGRA DE REGIONALIZAÇÃO/MOEDA
-            p_lower = str(prod_sel_h).lower()
-            if "frango" in p_lower or "boi" in p_lower:
-                st.info(
-                    f"ℹ️ Exibindo cotação oficial em **Reais (R$)** para"
-                    f" **{prod_sel_h}**."
                 )
-            elif "ovo" in p_lower:
-                st.info(
-                    "ℹ️ Exibindo cotação **CIF Região Grande SP** para Ovos."
-                )
-            elif "suino" in p_lower:
-                st.info("ℹ️ Exibindo cotação para **Suíno Vivo (SP)**.")
-
-            # CÁLCULO DOS CARDS EXECUTIVOS
-            # 1. Custo Médio do Último Mês (últimos 30 dias da base)
-            max_data = df_5anos[col_data].max()
-            df_30d = df_5anos[
-                df_5anos[col_data] >= (max_data - pd.Timedelta(days=30))
-            ]
-            custo_medio_30d = df_30d["Preco_Limpo"].mean()
-
-            # 2. Preço da Última Sexta-feira Registrada
-            df_sextas = df_5anos[df_5anos[col_data].dt.weekday == 4]
-            if not df_sextas.empty:
-                preco_ultima_sexta = df_sextas.iloc[-1]["Preco_Limpo"]
-                data_sexta_str = df_sextas.iloc[-1][col_data].strftime(
-                    "%d/%m/%Y"
-                )
-            else:
-                preco_ultima_sexta = df_5anos.iloc[-1]["Preco_Limpo"]
-                data_sexta_str = df_5anos.iloc[-1][col_data].strftime(
-                    "%d/%m/%Y"
+                k3.metric(
+                    label="Total de Registros na Base",
+                    value=f"{len(df_p)} cotações",
                 )
 
-            st.divider()
-            k1, k2, k3 = st.columns(3)
-            k1.metric(
-                label="Custo Médio (Último Mês)",
-                value=(
-                    f"R$ {custo_medio_30d:,.2f}"
-                    if pd.notnull(custo_medio_30d)
-                    else "N/A"
-                ),
-            )
-            k2.metric(
-                label=f"Fechamento Sexta-feira ({data_sexta_str})",
-                value=(
-                    f"R$ {preco_ultima_sexta:,.2f}"
-                    if pd.notnull(preco_ultima_sexta)
-                    else "N/A"
-                ),
-            )
-            k3.metric(
-                label="Volume da Série (5 Anos)",
-                value=f"{len(df_5anos)} registros",
-            )
+                st.divider()
 
-            st.divider()
-
-            # GRÁFICO LIMPO DE TENDÊNCIA CONTÍNUA (ÚLTIMOS 5 ANOS)
-            st.subheader(
-                f"📉 Curva de Tendência Histórica (Últimos 5 Anos) -"
-                f" {prod_sel_h}"
-            )
-
-            # Agrupamento Mensal para remover poluição visual diária
-            df_5anos["Ano_Mês"] = df_5anos[col_data].dt.to_period("M")
-            df_tendencia = (
-                df_5anos.groupby("Ano_Mês")["Preco_Limpo"]
-                .mean()
-                .reset_index()
-            )
-            df_tendencia["Data"] = df_tendencia["Ano_Mês"].dt.to_timestamp()
-
-            df_chart = df_tendencia.set_index("Data")[["Preco_Limpo"]]
-            df_chart.columns = ["Preço Médio (R$)"]
-
-            st.line_chart(df_chart, use_container_width=True)
-
-            with st.expander("📋 Ver Tabela de Dados"):
-                st.dataframe(
-                    df_5anos[[col_data, "Preco_Limpo"]],
-                    use_container_width=True,
+                # GRÁFICO DE TENDÊNCIA CONTINUA (ÚLTIMOS 5 ANOS AGRUPADO POR MÊS)
+                st.subheader(
+                    f"📉 Curva de Tendência Histórica (Últimos 5 Anos) -"
+                    f" {prod_sel}"
                 )
+
+                df_5y = df_p[
+                    df_p[col_data] >= (max_d - pd.DateOffset(years=5))
+                ].copy()
+                df_5y["Ano_Mês"] = df_5y[col_data].dt.to_period("M")
+
+                df_tend = (
+                    df_5y.groupby("Ano_Mês")["Preco_Limpo"].mean().reset_index()
+                )
+                df_tend["Data"] = df_tend["Ano_Mês"].dt.to_timestamp()
+
+                df_chart = df_tend.set_index("Data")[["Preco_Limpo"]]
+                df_chart.columns = ["Preço Médio (R$)"]
+
+                st.line_chart(df_chart, use_container_width=True)
+
+                with st.expander("📋 Ver Dados Brutos em Tabela"):
+                    st.dataframe(
+                        df_p[[col_data, "Preco_Limpo"]],
+                        use_container_width=True,
+                    )
 
         except Exception as e:
-            st.error(f"❌ Erro ao estruturar o histórico: {e}")
+            st.error(f"❌ Erro ao processar o histórico: {e}")
     else:
         st.warning(
             "⚠️ O arquivo de histórico não foi localizado no repositório."
