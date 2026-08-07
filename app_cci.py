@@ -127,7 +127,7 @@ with aba_matriz:
             options=["Todas as Bandeiras"] + BANDEIRAS_CENCOSUD,
         )
 
-    # 1. Carrega ou Inicializa Tabela de Variações de Mercado
+    # 1. Tabela de Variações de Mercado
     if os.path.exists(CAMINHO_REFERENCIA_MERCADO):
         df_ref_mkt = pd.read_excel(CAMINHO_REFERENCIA_MERCADO)
     else:
@@ -137,13 +137,15 @@ with aba_matriz:
             "Var_%_Ref_Mercado_Mensal": [3.20, -1.50, 4.00, 1.20],
         })
 
-    # 2. Carrega Cotações e Custos em Sistema
-    df_cotacoes = (
-        pd.read_excel(CAMINHO_ENTRADA)
-        if os.path.exists(CAMINHO_ENTRADA)
-        else pd.DataFrame(columns=["Bandeira", "Produto", "Cotacao_Cencosud"])
-    )
+    # 2. Carrega Cotações (com compatibilidade para nomes de colunas antigos e novos)
+    if os.path.exists(CAMINHO_ENTRADA):
+        df_cotacoes = pd.read_excel(CAMINHO_ENTRADA)
+        if "Custo_Pago_Cencosud" in df_cotacoes.columns and "Cotacao_Cencosud" not in df_cotacoes.columns:
+            df_cotacoes["Cotacao_Cencosud"] = df_cotacoes["Custo_Pago_Cencosud"]
+    else:
+        df_cotacoes = pd.DataFrame(columns=["Bandeira", "Produto", "Cotacao_Cencosud"])
 
+    # 3. Carrega Custos em Sistema
     df_custo_sis = (
         pd.read_excel(CAMINHO_CUSTO_SISTEMA)
         if os.path.exists(CAMINHO_CUSTO_SISTEMA)
@@ -165,14 +167,21 @@ with aba_matriz:
         df_custo_f = df_custo_sis[df_custo_sis["Bandeira"] == bandeira_filtro]
         df_cot_f = df_cotacoes[df_cotacoes["Bandeira"] == bandeira_filtro]
     else:
-        df_custo_f = df_custo_sis.groupby("Produto")["Custo_Atual_Sistema"].mean().reset_index()
-        df_cot_f = df_cotacoes.groupby("Produto")["Cotacao_Cencosud"].mean().reset_index()
+        df_custo_f = df_custo_sis.groupby("Produto", as_index=False)["Custo_Atual_Sistema"].mean()
+        if not df_cotacoes.empty and "Cotacao_Cencosud" in df_cotacoes.columns:
+            df_cot_f = df_cotacoes.groupby("Produto", as_index=False)["Cotacao_Cencosud"].mean()
+        else:
+            df_cot_f = pd.DataFrame(columns=["Produto", "Cotacao_Cencosud"])
 
     # Cruzamento dos Dados
     df_matriz = pd.merge(df_custo_f, df_cot_f, on="Produto", how="left")
     df_matriz = pd.merge(df_matriz, df_ref_mkt, on="Produto", how="left")
 
-    # Cálculos de Variação e Spread
+    # Garante existência da coluna mesmo se vazia
+    if "Cotacao_Cencosud" not in df_matriz.columns:
+        df_matriz["Cotacao_Cencosud"] = None
+
+    # Cálculos
     df_matriz["Var_%_Cotacao_vs_Custo"] = (
         (df_matriz["Cotacao_Cencosud"] - df_matriz["Custo_Atual_Sistema"])
         / df_matriz["Custo_Atual_Sistema"]
@@ -186,12 +195,15 @@ with aba_matriz:
         if pd.isna(row["Cotacao_Cencosud"]):
             return "⚪ Sem Cotação na Semana"
         var_cot = row["Var_%_Cotacao_vs_Custo"]
-        var_mkt = row["Var_%_Ref_Mercado_Semanal"]
+        var_mkt = row.get("Var_%_Ref_Mercado_Semanal", 0)
         
+        if pd.isna(var_mkt):
+            var_mkt = 0
+
         if var_cot > (var_mkt + 1.5):
-            return "🔴 ALERTA: Alta acima da tendência do mercado"
+            return "🔴 ALERTA: Alta acima do mercado"
         elif var_cot < var_mkt:
-            return "🟢 EXCELENTE: Negociação abaixo do mercado"
+            return "🟢 EXCELENTE: Preço abaixo do mercado"
         else:
             return "🟡 DENTRO DA META: Alinhado ao mercado"
 
@@ -199,7 +211,6 @@ with aba_matriz:
 
     st.divider()
 
-    # Exibição Formatada da Matriz
     cols_exibir = [
         "Produto",
         "Custo_Atual_Sistema",
@@ -214,8 +225,10 @@ with aba_matriz:
     if "Bandeira" in df_matriz.columns:
         cols_exibir.insert(0, "Bandeira")
 
+    cols_existentes = [c for c in cols_exibir if c in df_matriz.columns]
+
     st.dataframe(
-        df_matriz[cols_exibir].style.format({
+        df_matriz[cols_existentes].style.format({
             "Custo_Atual_Sistema": "R$ {:.2f}",
             "Cotacao_Cencosud": "R$ {:.2f}",
             "Spread_BRL": "R$ {:.2f}",
@@ -228,7 +241,6 @@ with aba_matriz:
 
     st.divider()
 
-    # Bloco para Atualização Semanal dos Parâmetros de Mercado
     with st.expander("⚙️ Painel do Gestor: Atualizar Variação da Referência de Mercado"):
         df_editor_ref = st.data_editor(
             df_ref_mkt, num_rows="fixed", key="editor_matriz_ref"
