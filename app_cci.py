@@ -8,7 +8,6 @@ import streamlit as st
 # ---------------------------------------------------------
 PASTA_PROJETO = os.path.dirname(os.path.abspath(__file__))
 
-# Aceita tanto .xlsx quanto .xls
 CAMINHO_HISTORICO_XLSX = os.path.join(PASTA_PROJETO, "historico_real.xlsx")
 CAMINHO_HISTORICO_XLS = os.path.join(PASTA_PROJETO, "historico_real.xls")
 
@@ -34,13 +33,22 @@ st.set_page_config(
 )
 
 st.title("🥩 Cencosud Commodity Intelligence (CCI)")
-st.caption("Plataforma de Inteligência Comercial e Variação de Custos")
+st.caption("Plataforma de Inteligência Comercial e Análise de Tendências")
 
-aba_entrada, aba_analise = st.tabs(
-    ["📝 Entrada & Indicadores Semanais", "📊 Matriz de Mercado & Histórico Real"]
-)
+# Três Abas Independentes
+aba_entrada, aba_analise, aba_historico = st.tabs([
+    "📝 Entrada Comprador (Semanal)",
+    "📊 Matriz de Referência de Mercado",
+    "📈 Inteligência & Histórico Temporal",
+])
 
-PRODUTOS_OFICIAIS = ["Filé de Peito", "Ovo c/ 20", "Alcatra", "Contra Filé"]
+PRODUTOS_OFICIAIS = [
+    "Frango Congelado",
+    "Boi Gordo",
+    "Ovo",
+    "Suíno Vivo",
+]
+
 BANDEIRAS_CENCOSUD = [
     "Prezunic",
     "Bretas",
@@ -50,7 +58,7 @@ BANDEIRAS_CENCOSUD = [
 ]
 
 # ---------------------------------------------------------
-# ABA 1: FORMULÁRIO + KPIS + VARIAÇÃO
+# ABA 1: FORMULÁRIO DO COMPRADOR
 # ---------------------------------------------------------
 with aba_entrada:
     st.subheader("Alimentação Semanal de Compras")
@@ -108,182 +116,194 @@ with aba_entrada:
     st.divider()
 
     if os.path.exists(CAMINHO_ENTRADA):
+        st.subheader("📋 Cotações da Semana")
         df_compras = pd.read_excel(CAMINHO_ENTRADA)
-
-        if os.path.exists(CAMINHO_REFERENCIA_MERCADO):
-            df_ref = pd.read_excel(CAMINHO_REFERENCIA_MERCADO)
-        else:
-            df_ref = pd.DataFrame({
-                "Produto": PRODUTOS_OFICIAIS,
-                "Preco_Mercado_Atual": [14.50, 8.20, 38.00, 42.00],
-                "Preco_Mercado_Semana_Anterior": [14.20, 8.50, 37.50, 41.00],
-                "Preco_Mercado_Mes_Anterior": [13.80, 8.00, 36.00, 40.00],
-            })
-
-        df_cruzado = pd.merge(df_compras, df_ref, on="Produto", how="left")
-
-        df_cruzado["Var_%_Mercado_Semanal"] = (
-            (
-                df_cruzado["Preco_Mercado_Atual"]
-                - df_cruzado["Preco_Mercado_Semana_Anterior"]
-            )
-            / df_cruzado["Preco_Mercado_Semana_Anterior"]
-        ) * 100
-
-        df_cruzado["Var_%_Mercado_Mensal"] = (
-            (
-                df_cruzado["Preco_Mercado_Atual"]
-                - df_cruzado["Preco_Mercado_Mes_Anterior"]
-            )
-            / df_cruzado["Preco_Mercado_Mes_Anterior"]
-        ) * 100
-
-        df_cruzado = df_cruzado.sort_values(
-            by=["Produto", "Bandeira", "Data_Compra"]
-        )
-        df_cruzado["Ultimo_Custo_Sistema"] = df_cruzado.groupby(
-            ["Produto", "Bandeira"]
-        )["Custo_Pago_Cencosud"].shift(1)
-
-        df_cruzado["Ultimo_Custo_Sistema"] = df_cruzado[
-            "Ultimo_Custo_Sistema"
-        ].fillna(df_cruzado["Custo_Pago_Cencosud"])
-
-        df_cruzado["Var_%_Custo_Cencosud"] = (
-            (
-                df_cruzado["Custo_Pago_Cencosud"]
-                - df_cruzado["Ultimo_Custo_Sistema"]
-            )
-            / df_cruzado["Ultimo_Custo_Sistema"]
-        ) * 100
-
-        df_cruzado["Spread_%"] = (
-            (
-                df_cruzado["Custo_Pago_Cencosud"]
-                - df_cruzado["Preco_Mercado_Atual"]
-            )
-            / df_cruzado["Preco_Mercado_Atual"]
-        ) * 100
-
-        df_cruzado["Diferenca_Total_BRL"] = (
-            df_cruzado["Custo_Pago_Cencosud"]
-            - df_cruzado["Preco_Mercado_Atual"]
-        )
-
-        st.subheader("📈 Painel Executivo de Desempenho")
-        kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-
-        total_cotacoes = len(df_cruzado)
-        spread_medio = df_cruzado["Spread_%"].mean()
-        var_mercado_semanal_media = df_cruzado["Var_%_Mercado_Semanal"].mean()
-        economia_estimada = df_cruzado["Diferenca_Total_BRL"].sum()
-
-        kpi1.metric(
-            label="Total de Cotações", value=f"{total_cotacoes} compras"
-        )
-        kpi2.metric(
-            label="Spread Médio vs Mercado",
-            value=f"{spread_medio:.2f}%",
-            delta=f"{spread_medio:.2f}%",
-            delta_color="inverse",
-        )
-        kpi3.metric(
-            label="Var. Média Mercado (7d)",
-            value=f"{var_mercado_semanal_media:.2f}%",
-        )
-        kpi4.metric(
-            label="Impacto / Desvio Total BRL",
-            value=f"R$ {economia_estimada:,.2f}",
-            delta=(
-                "Economia"
-                if economia_estimada < 0
-                else "Custo Acima do Mercado"
-            ),
-            delta_color="inverse",
-        )
-
-        st.divider()
-        st.subheader("📋 Acompanhamento Semanal de Variações de Preço")
-
-        cols_exibir = [
-            "Data_Compra",
-            "Bandeira",
-            "Produto",
-            "Custo_Pago_Cencosud",
-            "Ultimo_Custo_Sistema",
-            "Var_%_Custo_Cencosud",
-            "Preco_Mercado_Atual",
-            "Var_%_Mercado_Semanal",
-            "Var_%_Mercado_Mensal",
-            "Spread_%",
-            "Fornecedor",
-        ]
-
-        st.dataframe(
-            df_cruzado[cols_exibir].style.format({
-                "Custo_Pago_Cencosud": "R$ {:.2f}",
-                "Ultimo_Custo_Sistema": "R$ {:.2f}",
-                "Preco_Mercado_Atual": "R$ {:.2f}",
-                "Var_%_Custo_Cencosud": "{:.2f}%",
-                "Var_%_Mercado_Semanal": "{:.2f}%",
-                "Var_%_Mercado_Mensal": "{:.2f}%",
-                "Spread_%": "{:.2f}%",
-            }),
-            use_container_width=True,
-        )
+        st.dataframe(df_compras, use_container_width=True)
 
 # ---------------------------------------------------------
-# ABA 2: REFERÊNCIA DE MERCADO & CORREÇÃO DO HISTÓRICO
+# ABA 2: MATRIZ DE REFERÊNCIA DE MERCADO
 # ---------------------------------------------------------
 with aba_analise:
-    st.subheader("Gestão de Referência de Mercado e Histórico Real")
+    st.subheader("Gestão do Preço Referência de Mercado (CEPEA/CEAGESP)")
 
-    col_esq, col_dir = st.columns(2)
+    df_ref_atual = (
+        pd.read_excel(CAMINHO_REFERENCIA_MERCADO)
+        if os.path.exists(CAMINHO_REFERENCIA_MERCADO)
+        else pd.DataFrame({
+            "Produto": PRODUTOS_OFICIAIS,
+            "Preco_Mercado_Atual": [7.50, 230.00, 115.00, 7.20],
+            "Unidade_Medida": [
+                "R$ / Kg",
+                "R$ / @",
+                "R$ / Caixa CIF SP",
+                "R$ / Kg SP",
+            ],
+            "Preco_Mercado_Semana_Anterior": [7.40, 228.00, 112.00, 7.10],
+            "Preco_Mercado_Mes_Anterior": [7.20, 225.00, 110.00, 6.90],
+        })
+    )
 
-    with col_esq:
-        st.write("**1. Tabela de Preço Referência de Mercado (CEPEA/CEAGESP)**")
+    df_editor_ref = st.data_editor(
+        df_ref_atual, num_rows="fixed", key="editor_ref_mercado"
+    )
 
-        df_ref_atual = (
-            pd.read_excel(CAMINHO_REFERENCIA_MERCADO)
-            if os.path.exists(CAMINHO_REFERENCIA_MERCADO)
-            else pd.DataFrame({
-                "Produto": PRODUTOS_OFICIAIS,
-                "Preco_Mercado_Atual": [14.50, 8.20, 38.00, 42.00],
-                "Preco_Mercado_Semana_Anterior": [14.20, 8.50, 37.50, 41.00],
-                "Preco_Mercado_Mes_Anterior": [13.80, 8.00, 36.00, 40.00],
-            })
-        )
+    if st.button("💾 Atualizar Tabela de Referência de Mercado"):
+        df_editor_ref.to_excel(CAMINHO_REFERENCIA_MERCADO, index=False)
+        st.success("✅ Referência de mercado atualizada com sucesso!")
 
-        df_editor_ref = st.data_editor(
-            df_ref_atual, num_rows="fixed", key="editor_ref_mercado"
-        )
+# ---------------------------------------------------------
+# ABA 3: INTELIGÊNCIA & HISTÓRICO TEMPORAL (NOVA TELA)
+# ---------------------------------------------------------
+with aba_historico:
+    st.subheader("📈 Análise de Histórico e Tendência Anual")
 
-        if st.button("💾 Atualizar Tabela de Referência de Mercado"):
-            df_editor_ref.to_excel(CAMINHO_REFERENCIA_MERCADO, index=False)
-            st.success("✅ Referência de mercado atualizada com sucesso!")
+    if CAMINHO_HISTORICO and os.path.exists(CAMINHO_HISTORICO):
+        try:
+            df_h = pd.read_excel(CAMINHO_HISTORICO)
 
-    with col_dir:
-        st.write("**2. Leitura da Base Histórica Real**")
-        if CAMINHO_HISTORICO and os.path.exists(CAMINHO_HISTORICO):
-            try:
-                df_hist = pd.read_excel(CAMINHO_HISTORICO)
+            # Normalização de Nomes de Colunas
+            df_h.columns = [str(col).strip() for col in df_h.columns]
 
-                st.success(f"✅ Histórico lido ({len(df_hist)} registros).")
-                st.dataframe(df_hist, height=220, use_container_width=True)
-
-                col_num = df_hist.select_dtypes(
-                    include=["float", "int"]
-                ).columns
-                if len(col_num) > 0:
-                    st.write("**Evolução Histórica:**")
-                    st.line_chart(df_hist[col_num[0]])
-
-            except Exception as e:
-                st.error(
-                    f"❌ Erro ao ler o arquivo de histórico: {e}. Verifique se"
-                    " a extensão está correta."
-                )
-        else:
-            st.warning(
-                "⚠️ Arquivo de histórico não localizado na raiz do repositório."
+            # Identificação Inteligente de Coluna de Data e Preço
+            col_data = next(
+                (
+                    c
+                    for c in df_h.columns
+                    if "data" in c.lower() or "date" in c.lower()
+                ),
+                df_h.columns[0],
             )
+
+            df_h[col_data] = pd.to_datetime(df_h[col_data], errors="coerce")
+            df_h = df_h.dropna(subset=[col_data]).sort_values(by=col_data)
+
+            # Filtro por Produto
+            col_prod = next(
+                (
+                    c
+                    for c in df_h.columns
+                    if "prod" in c.lower() or "item" in c.lower()
+                ),
+                None,
+            )
+
+            col_esq_filt, col_dir_info = st.columns([1, 2])
+
+            with col_esq_filt:
+                if col_prod:
+                    produtos_disponiveis = list(df_h[col_prod].unique())
+                    prod_selecionado = st.selectbox(
+                        "Selecione o Produto para Análise:",
+                        options=produtos_disponiveis,
+                    )
+                    df_filtrado = df_h[df_h[col_prod] == prod_selecionado]
+                else:
+                    prod_selecionado = "Todos os Produtos"
+                    df_filtrado = df_h
+
+            with col_dir_info:
+                # Regras Específicas de Filtros de Mercado por Categoria
+                if (
+                    "frango" in str(prod_selecionado).lower()
+                    or "boi" in str(prod_selecionado).lower()
+                ):
+                    st.info(
+                        f"ℹ️ Exibindo apenas cotação oficial em **Reais"
+                        f" (R$)** para **{prod_selecionado}**."
+                    )
+                elif "ovo" in str(prod_selecionado).lower():
+                    st.info(
+                        "ℹ️ Exibindo apenas preço **CIF Região Grande SP** para"
+                        " Ovos."
+                    )
+                elif "suino" in str(prod_selecionado).lower():
+                    st.info(
+                        "ℹ️ Exibindo apenas cotação para **Suíno Vivo (SP)**."
+                    )
+
+            # Busca Coluna de Preço/Custo no Histórico
+            col_preco = next(
+                (
+                    c
+                    for c in df_filtrado.columns
+                    if "preco" in c.lower()
+                    or "custo" in c.lower()
+                    or "valor" in c.lower()
+                ),
+                df_filtrado.select_dtypes(include=["float", "int"]).columns[0],
+            )
+
+            # Filtro da Última Sexta-feira Registrada
+            df_filtrado["Dia_Semana"] = df_filtrado[col_data].dt.day_name()
+            df_sextas = df_filtrado[
+                df_filtrado[col_data].dt.weekday == 4
+            ]  # 4 = Sexta-feira
+
+            if not df_sextas.empty:
+                ultimo_preco_sexta = df_sextas.iloc[-1][col_preco]
+                data_ultima_sexta = df_sextas.iloc[-1][col_data].strftime(
+                    "%d/%m/%Y"
+                )
+            else:
+                ultimo_preco_sexta = df_filtrado.iloc[-1][col_preco]
+                data_ultima_sexta = df_filtrado.iloc[-1][col_data].strftime(
+                    "%d/%m/%Y"
+                )
+
+            # Cálculo do Custo Médio do Último Mês (30 dias da última data registrada)
+            ultima_data_base = df_filtrado[col_data].max()
+            data_limite_30d = ultima_data_base - pd.Timedelta(days=30)
+            df_ultimo_mes = df_filtrado[
+                df_filtrado[col_data] >= data_limite_30d
+            ]
+            media_custo_ultimo_mes = df_ultimo_mes[col_preco].mean()
+
+            st.divider()
+
+            # CARDS DE KPIS HISTÓRICOS
+            m1, m2, m3 = st.columns(3)
+            m1.metric(
+                label="Custo Médio (Último Mês)",
+                value=f"R$ {media_custo_ultimo_mes:,.2f}",
+            )
+            m2.metric(
+                label=f"Preço Última Sexta-feira ({data_ultima_sexta})",
+                value=f"R$ {ultimo_preco_sexta:,.2f}",
+            )
+            m3.metric(
+                label="Total de Registros na Base",
+                value=f"{len(df_filtrado)} cotações",
+            )
+
+            st.divider()
+
+            # GRÁFICO DE TENDÊNCIA DE ANOS
+            st.subheader(f"📊 Curva Múltipla de Tendência Anual - {prod_selecionado}")
+
+            df_grafico = df_filtrado.copy()
+            df_grafico["Ano"] = df_grafico[col_data].dt.year
+            df_grafico["Mês_Dia"] = df_grafico[col_data].dt.strftime("%m-%d")
+
+            # Pivot para exibir uma linha por ano no mesmo gráfico
+            df_pivot = df_grafico.pivot_table(
+                index="Mês_Dia",
+                columns="Ano",
+                values=col_preco,
+                aggfunc="mean",
+            )
+            st.line_chart(df_pivot, use_container_width=True)
+
+            # Exibição da Tabela Filtrada
+            with st.expander("📋 Ver Dados Históricos Detalhados em Tabela"):
+                st.dataframe(
+                    df_filtrado[[col_data, col_preco] + ([col_prod] if col_prod else [])],
+                    use_container_width=True,
+                )
+
+        except Exception as e:
+            st.error(f"❌ Erro ao processar a base de histórico: {e}")
+    else:
+        st.warning(
+            "⚠️ O arquivo **historico_real.xls** / **historico_real.xlsx** precisa"
+            " estar presente no repositório do GitHub."
+        )
