@@ -25,11 +25,11 @@ CAMINHO_CUSTO_SISTEMA = os.path.join(
 )
 
 # ---------------------------------------------------------
-# PROCESSADOR UNIVERSAL DE HISTÓRICO REAL ITEM A ITEM
+# EXTRAI VALORES NOMINAIS DE REFERÊNCIA (SEMANA E MÊS ANTERIOR)
 # ---------------------------------------------------------
 @st.cache_data(ttl=3600)
-def obter_variacoes_historico_real(caminho_file):
-    variacoes = {}
+def obter_precos_referencia_historico(caminho_file):
+    precos_ref = {}
     if caminho_file and os.path.exists(caminho_file):
         try:
             xls = pd.ExcelFile(caminho_file)
@@ -114,9 +114,7 @@ def obter_variacoes_historico_real(caminho_file):
                     df_acumulado = df_acumulado.sort_values(by="Data_Tmp")
                     max_d = df_acumulado["Data_Tmp"].max()
 
-                    df_u30 = df_acumulado[
-                        df_acumulado["Data_Tmp"] >= (max_d - pd.Timedelta(days=30))
-                    ]
+                    # Preço Médio Mês Anterior (30 a 60 dias atrás)
                     df_p30 = df_acumulado[
                         (
                             df_acumulado["Data_Tmp"]
@@ -127,32 +125,26 @@ def obter_variacoes_historico_real(caminho_file):
                             >= (max_d - pd.Timedelta(days=60))
                         )
                     ]
-
-                    m_u30 = df_u30["Preco_Limpo"].mean()
-                    m_p30 = df_p30["Preco_Limpo"].mean()
-                    v_mes = (
-                        ((m_u30 - m_p30) / m_p30 * 100)
-                        if (pd.notnull(m_p30) and m_p30 > 0)
-                        else 0.0
+                    preco_mes_ant = (
+                        df_p30["Preco_Limpo"].mean()
+                        if not df_p30.empty
+                        else df_acumulado["Preco_Limpo"].mean()
                     )
 
+                    # Preço Fechamento da Sexta Anterior
                     df_sextas = df_acumulado[
                         df_acumulado["Data_Tmp"].dt.weekday == 4
                     ]
                     if len(df_sextas) >= 2:
-                        p_sex1 = df_sextas.iloc[-1]["Preco_Limpo"]
-                        p_sex2 = df_sextas.iloc[-2]["Preco_Limpo"]
-                        v_sem = (
-                            ((p_sex1 - p_sex2) / p_sex2 * 100)
-                            if p_sex2 > 0
-                            else 0.0
-                        )
+                        preco_sem_ant = df_sextas.iloc[-2]["Preco_Limpo"]
+                    elif not df_sextas.empty:
+                        preco_sem_ant = df_sextas.iloc[-1]["Preco_Limpo"]
                     else:
-                        v_sem = 0.0
+                        preco_sem_ant = df_acumulado.iloc[-1]["Preco_Limpo"]
 
-                    variacoes[comm_ref] = {
-                        "Var_%_Ref_Mercado_Semanal": v_sem,
-                        "Var_%_Ref_Mercado_Mensal": v_mes,
+                    precos_ref[comm_ref] = {
+                        "Preco_Ref_Semana_Anterior": preco_sem_ant,
+                        "Preco_Ref_Mes_Anterior": preco_mes_ant,
                     }
 
         except Exception:
@@ -169,17 +161,17 @@ def obter_variacoes_historico_real(caminho_file):
         "Maçã Gala",
         "Tomate",
     ]:
-        if c not in variacoes:
-            variacoes[c] = {
-                "Var_%_Ref_Mercado_Semanal": 0.0,
-                "Var_%_Ref_Mercado_Mensal": 0.0,
+        if c not in precos_ref:
+            precos_ref[c] = {
+                "Preco_Ref_Semana_Anterior": None,
+                "Preco_Ref_Mes_Anterior": None,
             }
 
-    df_res = pd.DataFrame.from_dict(variacoes, orient="index").reset_index()
+    df_res = pd.DataFrame.from_dict(precos_ref, orient="index").reset_index()
     df_res.columns = [
         "Produto",
-        "Var_%_Ref_Mercado_Semanal",
-        "Var_%_Ref_Mercado_Mensal",
+        "Preco_Ref_Semana_Anterior",
+        "Preco_Ref_Mes_Anterior",
     ]
     return df_res
 
@@ -323,8 +315,8 @@ with aba_entrada:
         )
         st.info(
             f"💡 **Índice de Referência:** O item **{produto_sel}** será"
-            f" comparado com a variação da referência **{commodity_ref}** na"
-            " Matriz de Decisão."
+            f" comparado com a referência **{commodity_ref}** na Matriz de"
+            " Decisão."
         )
 
         btn_salvar = st.form_submit_button(
@@ -388,7 +380,7 @@ with aba_entrada:
             )
 
 # ---------------------------------------------------------
-# ABA 2: MATRIZ DE DECISÃO (REFERÊNCIAS DIRETAS DE CADA FLV)
+# ABA 2: MATRIZ DE DECISÃO (COTAÇÃO VS PREÇO HISTÓRICO REFERÊNCIA)
 # ---------------------------------------------------------
 with aba_matriz:
     st.subheader("📊 Matriz Comercial: Custo Atual vs Cotação vs Variação de Mercado")
@@ -419,7 +411,8 @@ with aba_matriz:
             options=["Todos os Fornecedores"] + todos_fornecedores,
         )
 
-    df_ref_mkt = obter_variacoes_historico_real(CAMINHO_HISTORICO)
+    # Preços nominais históricos
+    df_precos_ref = obter_precos_referencia_historico(CAMINHO_HISTORICO)
 
     if os.path.exists(CAMINHO_ENTRADA):
         df_cotacoes = pd.read_excel(CAMINHO_ENTRADA)
@@ -496,19 +489,32 @@ with aba_matriz:
 
     df_matriz = pd.merge(
         df_matriz,
-        df_ref_mkt,
+        df_precos_ref,
         left_on="Commodity_Referencia",
         right_on="Produto",
         how="left",
-        suffixes=("", "_Mkt"),
+        suffixes=("", "_Ref"),
     )
 
     if "Cotacao_Cencosud" not in df_matriz.columns:
         df_matriz["Cotacao_Cencosud"] = None
 
+    # 1. Var Cotação vs Custo Atual em Sistema
     df_matriz["Var_%_Cotacao_vs_Custo"] = (
         (df_matriz["Cotacao_Cencosud"] - df_matriz["Custo_Atual_Sistema"])
         / df_matriz["Custo_Atual_Sistema"]
+    ) * 100
+
+    # 2. Var Cotação vs Preço Referência Semana Anterior
+    df_matriz["Var_%_Ref_Mercado_Semanal"] = (
+        (df_matriz["Cotacao_Cencosud"] - df_matriz["Preco_Ref_Semana_Anterior"])
+        / df_matriz["Preco_Ref_Semana_Anterior"]
+    ) * 100
+
+    # 3. Var Cotação vs Preço Referência Mês Anterior
+    df_matriz["Var_%_Ref_Mercado_Mensal"] = (
+        (df_matriz["Cotacao_Cencosud"] - df_matriz["Preco_Ref_Mes_Anterior"])
+        / df_matriz["Preco_Ref_Mes_Anterior"]
     ) * 100
 
     df_matriz["Spread_BRL"] = (
@@ -518,15 +524,14 @@ with aba_matriz:
     def diagnostico(row):
         if pd.isna(row["Cotacao_Cencosud"]):
             return "⚪ Sem Cotação"
-        var_cot = row["Var_%_Cotacao_vs_Custo"]
-        var_mkt = row.get("Var_%_Ref_Mercado_Semanal", 0)
+        var_sem = row.get("Var_%_Ref_Mercado_Semanal", 0)
 
-        if pd.isna(var_mkt):
-            var_mkt = 0
+        if pd.isna(var_sem):
+            var_sem = 0
 
-        if var_cot > (var_mkt + 1.5):
+        if var_sem > 1.5:
             return "🔴 ALERTA"
-        elif var_cot < var_mkt:
+        elif var_sem < 0:
             return "🟢 EXCELENTE"
         else:
             return "🟡 ALINHADO"
