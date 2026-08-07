@@ -1,6 +1,5 @@
 import datetime
 import os
-import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -9,7 +8,17 @@ import streamlit as st
 # ---------------------------------------------------------
 PASTA_PROJETO = os.path.dirname(os.path.abspath(__file__))
 
-CAMINHO_HISTORICO = os.path.join(PASTA_PROJETO, "historico_real.xlsx")
+# Aceita tanto .xlsx quanto .xls
+CAMINHO_HISTORICO_XLSX = os.path.join(PASTA_PROJETO, "historico_real.xlsx")
+CAMINHO_HISTORICO_XLS = os.path.join(PASTA_PROJETO, "historico_real.xls")
+
+if os.path.exists(CAMINHO_HISTORICO_XLSX):
+    CAMINHO_HISTORICO = CAMINHO_HISTORICO_XLSX
+elif os.path.exists(CAMINHO_HISTORICO_XLS):
+    CAMINHO_HISTORICO = CAMINHO_HISTORICO_XLS
+else:
+    CAMINHO_HISTORICO = None
+
 CAMINHO_ENTRADA = os.path.join(PASTA_PROJETO, "cotacoes_semanais.xlsx")
 CAMINHO_REFERENCIA_MERCADO = os.path.join(
     PASTA_PROJETO, "referencia_mercado.xlsx"
@@ -98,11 +107,9 @@ with aba_entrada:
 
     st.divider()
 
-    # Cálculo dos KPIs Executivos e Variação de Preços
     if os.path.exists(CAMINHO_ENTRADA):
         df_compras = pd.read_excel(CAMINHO_ENTRADA)
 
-        # Preço de referência de mercado com variações
         if os.path.exists(CAMINHO_REFERENCIA_MERCADO):
             df_ref = pd.read_excel(CAMINHO_REFERENCIA_MERCADO)
         else:
@@ -115,7 +122,6 @@ with aba_entrada:
 
         df_cruzado = pd.merge(df_compras, df_ref, on="Produto", how="left")
 
-        # Variações da Referência de Mercado
         df_cruzado["Var_%_Mercado_Semanal"] = (
             (
                 df_cruzado["Preco_Mercado_Atual"]
@@ -132,13 +138,13 @@ with aba_entrada:
             / df_cruzado["Preco_Mercado_Mes_Anterior"]
         ) * 100
 
-        # Identifica o Último Custo do Sistema por Produto/Bandeira para calcular a variação negociada
-        df_cruzado = df_cruzado.sort_values(by=["Produto", "Bandeira", "Data_Compra"])
+        df_cruzado = df_cruzado.sort_values(
+            by=["Produto", "Bandeira", "Data_Compra"]
+        )
         df_cruzado["Ultimo_Custo_Sistema"] = df_cruzado.groupby(
             ["Produto", "Bandeira"]
         )["Custo_Pago_Cencosud"].shift(1)
-        
-        # Se for a primeira compra da bandeira, usa a própria cotação como base
+
         df_cruzado["Ultimo_Custo_Sistema"] = df_cruzado[
             "Ultimo_Custo_Sistema"
         ].fillna(df_cruzado["Custo_Pago_Cencosud"])
@@ -164,9 +170,6 @@ with aba_entrada:
             - df_cruzado["Preco_Mercado_Atual"]
         )
 
-        # ---------------------------------------------------------
-        # BLOCO DE KPIS EXECUTIVOS
-        # ---------------------------------------------------------
         st.subheader("📈 Painel Executivo de Desempenho")
         kpi1, kpi2, kpi3, kpi4 = st.columns(4)
 
@@ -261,40 +264,26 @@ with aba_analise:
 
     with col_dir:
         st.write("**2. Leitura da Base Histórica Real**")
-        if os.path.exists(CAMINHO_HISTORICO):
+        if CAMINHO_HISTORICO and os.path.exists(CAMINHO_HISTORICO):
             try:
-                # Tenta ler a planilha com suporte a múltiplas abas ou formatos
-                excel_obj = pd.ExcelFile(CAMINHO_HISTORICO)
-                nome_aba = excel_obj.sheet_names[0]
-                df_hist = pd.read_excel(CAMINHO_HISTORICO, sheet_name=nome_aba)
+                df_hist = pd.read_excel(CAMINHO_HISTORICO)
 
-                st.success(
-                    f"✅ Histórico lido da aba '{nome_aba}' ({len(df_hist)}"
-                    " registros)."
-                )
-
-                # Busca automática por colunas de preço e produto
+                st.success(f"✅ Histórico lido ({len(df_hist)} registros).")
                 st.dataframe(df_hist, height=220, use_container_width=True)
 
-                # Se houver coluna de data e preço, plota gráfico temporal
-                cols_inferior = [c.lower() for c in df_hist.columns]
-                col_preco = [
-                    c
-                    for c in df_hist.columns
-                    if "preco" in c.lower()
-                    or "custo" in c.lower()
-                    or "valor" in c.lower()
-                ]
-
-                if col_preco:
-                    st.write("**Evolução Histórica de Preços:**")
-                    st.line_chart(df_hist[col_preco[0]])
+                col_num = df_hist.select_dtypes(
+                    include=["float", "int"]
+                ).columns
+                if len(col_num) > 0:
+                    st.write("**Evolução Histórica:**")
+                    st.line_chart(df_hist[col_num[0]])
 
             except Exception as e:
-                st.error(f"❌ Erro ao ler a planilha historico_real.xlsx: {e}")
+                st.error(
+                    f"❌ Erro ao ler o arquivo de histórico: {e}. Verifique se"
+                    " a extensão está correta."
+                )
         else:
             st.warning(
-                "⚠️ Para visualizar a base histórica, suba o arquivo"
-                " **historico_real.xlsx** na raiz do seu repositório do"
-                " GitHub."
+                "⚠️ Arquivo de histórico não localizado na raiz do repositório."
             )
