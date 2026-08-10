@@ -8,7 +8,7 @@ from streamlit_gsheets import GSheetsConnection
 # ---------------------------------------------------------
 # LINK DA SUA PLANILHA DO GOOGLE SHEETS (COLE SEU LINK AQUI)
 # ---------------------------------------------------------
-URL_GOOGLE_SHEETS = https://docs.google.com/spreadsheets/d/1RzJ41JQQPM6ibJrnxmaJNq5JCZiROXAemsaxBvcQV2I/edit?usp=sharing
+URL_GOOGLE_SHEETS = "https://docs.google.com/spreadsheets/d/1RzJ41JQQPM6ibJrnxmaJNq5JCZiROXAemsaxBvcQV2I/edit?usp=sharing"
 
 # ---------------------------------------------------------
 # DIRETÓRIOS E ARQUIVOS NUVEM & LOCAL
