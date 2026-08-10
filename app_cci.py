@@ -3,6 +3,12 @@ import io
 import os
 import pandas as pd
 import streamlit as st
+from streamlit_gsheets import GSheetsConnection
+
+# ---------------------------------------------------------
+# LINK DA SUA PLANILHA DO GOOGLE SHEETS (COLE SEU LINK AQUI)
+# ---------------------------------------------------------
+URL_GOOGLE_SHEETS = https://docs.google.com/spreadsheets/d/1RzJ41JQQPM6ibJrnxmaJNq5JCZiROXAemsaxBvcQV2I/edit?usp=sharing
 
 # ---------------------------------------------------------
 # DIRETÓRIOS E ARQUIVOS NUVEM & LOCAL
@@ -19,10 +25,50 @@ elif os.path.exists(CAMINHO_HISTORICO_XLSX):
 else:
     CAMINHO_HISTORICO = None
 
-CAMINHO_ENTRADA = os.path.join(PASTA_PROJETO, "cotacoes_semanais.xlsx")
 CAMINHO_CUSTO_SISTEMA = os.path.join(
     PASTA_PROJETO, "custo_atual_sistema.xlsx"
 )
+
+# ---------------------------------------------------------
+# LEITURA E GRAVAÇÃO NO GOOGLE SHEETS
+# ---------------------------------------------------------
+def carregar_cotacoes_google():
+    """Carrega as cotações diretamente da Planilha do Google Sheets."""
+    try:
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        df = conn.read(spreadsheet=URL_GOOGLE_SHEETS, ttl=0)
+        if df is not None and not df.empty:
+            df.columns = [str(c).strip() for c in df.columns]
+            return df
+    except Exception as e:
+        pass
+    return pd.DataFrame(
+        columns=[
+            "Data_Compra",
+            "Bandeira",
+            "Categoria",
+            "Produto",
+            "Commodity_Referencia",
+            "Cotacao_Cencosud",
+            "Fornecedor",
+            "Data_Captura",
+        ]
+    )
+
+def salvar_cotacao_google(novo_registro):
+    """Adiciona uma nova cotação na Planilha do Google Sheets."""
+    try:
+        df_atual = carregar_cotacoes_google()
+        df_novo = pd.DataFrame([novo_registro])
+        df_final = pd.concat([df_atual, df_novo], ignore_index=True)
+        
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        conn.update(spreadsheet=URL_GOOGLE_SHEETS, data=df_final)
+        st.cache_data.clear()
+        return True
+    except Exception as e:
+        st.error(f"❌ Erro ao salvar no Google Sheets: {e}")
+        return False
 
 # ---------------------------------------------------------
 # EXTRAI VALORES DE REFERÊNCIA HISTÓRICOS DE MERCADO
@@ -310,7 +356,7 @@ with aba_entrada:
         )
 
         btn_salvar = st.form_submit_button(
-            label="💾 Registrar Cotação de Compra"
+            label="💾 Registrar Cotação no Google Sheets"
         )
 
     if btn_salvar:
@@ -325,24 +371,16 @@ with aba_entrada:
             "Data_Captura": datetime.date.today().strftime("%Y-%m-%d"),
         }
 
-        if os.path.exists(CAMINHO_ENTRADA):
-            df_existente = pd.read_excel(CAMINHO_ENTRADA)
-            df_atualizado = pd.concat(
-                [df_existente, pd.DataFrame([novo_registro])], ignore_index=True
+        if salvar_cotacao_google(novo_registro):
+            st.success(
+                f"✅ Cotação de **{produto_sel}** ({fornecedor_sel}) em R$/kg"
+                " gravada com sucesso no Google Sheets!"
             )
-        else:
-            df_atualizado = pd.DataFrame([novo_registro])
-
-        df_atualizado.to_excel(CAMINHO_ENTRADA, index=False)
-        st.success(
-            f"✅ Cotação de **{produto_sel}** ({fornecedor_sel}) em R$/kg"
-            " registrada com sucesso!"
-        )
 
     st.divider()
 
-    if os.path.exists(CAMINHO_ENTRADA):
-        df_historico_cotacoes = pd.read_excel(CAMINHO_ENTRADA)
+    df_historico_cotacoes = carregar_cotacoes_google()
+    if not df_historico_cotacoes.empty:
         df_historico_cotacoes = df_historico_cotacoes.iloc[::-1].reset_index(
             drop=True
         )
@@ -360,7 +398,7 @@ with aba_entrada:
         ]
 
         with st.expander(
-            "📋 Ver Cotações Registradas na Semana (Mais recentes primeiro)"
+            "📋 Ver Cotações Registradas (Google Sheets Nuvem)"
         ):
             st.dataframe(
                 df_historico_cotacoes[cols_existentes].style.format({
@@ -376,25 +414,13 @@ with aba_matriz:
     st.subheader("📊 Matriz Comercial: Custo Atual vs Cotação vs Variação de Mercado")
 
     df_precos_ref = obter_precos_referencia_historico(CAMINHO_HISTORICO)
+    df_cotacoes = carregar_cotacoes_google()
 
-    if os.path.exists(CAMINHO_ENTRADA):
-        df_cotacoes = pd.read_excel(CAMINHO_ENTRADA)
-        if (
-            "Custo_Pago_Cencosud" in df_cotacoes.columns
-            and "Cotacao_Cencosud" not in df_cotacoes.columns
-        ):
-            df_cotacoes["Cotacao_Cencosud"] = df_cotacoes["Custo_Pago_Cencosud"]
-    else:
-        df_cotacoes = pd.DataFrame(
-            columns=[
-                "Data_Compra",
-                "Bandeira",
-                "Categoria",
-                "Produto",
-                "Cotacao_Cencosud",
-                "Fornecedor",
-            ]
-        )
+    if (
+        "Custo_Pago_Cencosud" in df_cotacoes.columns
+        and "Cotacao_Cencosud" not in df_cotacoes.columns
+    ):
+        df_cotacoes["Cotacao_Cencosud"] = df_cotacoes["Custo_Pago_Cencosud"]
 
     datas_disponiveis = (
         sorted(df_cotacoes["Data_Compra"].astype(str).unique(), reverse=True)
@@ -685,7 +711,7 @@ with aba_matriz:
         st.info("ℹ️ Nenhum item cotado para a rodada e filtros selecionados.")
 
 # ---------------------------------------------------------
-# ABA 3: HISTÓRICO TEMPORAL (MERCADO VS CUSTO SISTEMA CENCOSUD)
+# ABA 3: HISTÓRICO TEMPORAL
 # ---------------------------------------------------------
 with aba_historico:
     st.subheader("📈 Análise Executiva e Tendência Histórica Mensal")
@@ -879,7 +905,6 @@ with aba_historico:
                 f" {prod_selecionado}"
             )
 
-            # Curva 1: Mercado Oficial
             df_5y = df_p[
                 df_p[col_data] >= (max_d - pd.DateOffset(years=5))
             ].copy()
@@ -891,7 +916,6 @@ with aba_historico:
             df_mkt_mes = df_mkt_mes.set_index("Data_Mensal")[["Preco_Limpo"]]
             df_mkt_mes.columns = ["Mercado Oficial (R$/kg)"]
 
-            # Curva 2: Histórico de Custo Atual do Sistema
             if os.path.exists(CAMINHO_CUSTO_SISTEMA):
                 df_sis = pd.read_excel(CAMINHO_CUSTO_SISTEMA)
                 if (
